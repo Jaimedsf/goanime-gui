@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GoAnime</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <button type="button" id="home-btn" class="brand" title="Início">
+        GoAnime
+      </button>
+
+      <form id="search-form" role="search">
+        <div class="input-wrap">
+          <input
+            id="query"
+            type="text"
+            placeholder="Buscar anime, filme ou série…"
+            autocomplete="off"
+            list="search-history"
+            aria-label="Termo de busca"
+            required
+          />
+          <datalist id="search-history"></datalist>
+          <kbd class="hint">Ctrl K</kbd>
+        </div>
+
+        <select id="source" aria-label="Fonte">
+          <option value="all">Todas as fontes</option>
+        </select>
+
+        <button type="submit" id="search-btn">Buscar</button>
+        <button type="button" id="cancel-btn" class="ghost" hidden>
+          Cancelar
+        </button>
+      </form>
+
+      <button type="button" id="downloads-chip" class="chip" title="Downloads">
+        <span class="chip-label">Downloads</span>
+        <span class="chip-value" id="downloads-count">0</span>
+      </button>
+
+      <button
+        type="button"
+        id="player-chip"
+        class="chip"
+        title="Trocar o player usado na reprodução"
+      >
+        <span class="chip-label">Player</span>
+        <span class="chip-value" id="player-name">mpv</span>
+      </button>
+    </header>
+
+    <main>
+      <!-- The five sections are tabs rather than one long scroll. Beyond
+           being easier to navigate, only the active tab loads: AniList is
+           rate-limited, and fetching the calendar, the catalog and every
+           favorite's artwork at once is what used to trip its limit. -->
+      <nav id="tabs" class="tabs" role="tablist" aria-label="Seções">
+        <button
+          type="button"
+          class="tab"
+          id="tab-schedule"
+          data-tab="schedule"
+          role="tab"
+          aria-selected="true"
+          aria-controls="schedule-pane"
+        >
+          Calendário
+        </button>
+        <button
+          type="button"
+          class="tab"
+          id="tab-catalog"
+          data-tab="catalog"
+          role="tab"
+          aria-selected="false"
+          aria-controls="catalog-pane"
+        >
+          Catálogo
+        </button>
+        <button
+          type="button"
+          class="tab"
+          id="tab-results"
+          data-tab="results"
+          role="tab"
+          aria-selected="false"
+          aria-controls="results-pane"
+        >
+          Busca
+        </button>
+        <button
+          type="button"
+          class="tab"
+          id="tab-favorites"
+          data-tab="favorites"
+          role="tab"
+          aria-selected="false"
+          aria-controls="favorites-pane"
+        >
+          Favoritos
+          <span class="tab-count" id="tab-favorites-count" hidden></span>
+        </button>
+        <button
+          type="button"
+          class="tab"
+          id="tab-history"
+          data-tab="history"
+          role="tab"
+          aria-selected="false"
+          aria-controls="history-pane"
+        >
+          Histórico
+          <span class="tab-count" id="tab-history-count" hidden></span>
+        </button>
+      </nav>
+
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+
+      <!-- Weekly calendar: what airs on which day, favorites highlighted.
+           It is the default tab because "what comes out today?" is the
+           question a viewer opens the app with. -->
+      <section id="schedule-pane" role="tabpanel" aria-labelledby="tab-schedule">
+        <div class="pane-head">
+          <h2>Calendário da semana</h2>
+          <span class="count" id="schedule-count"></span>
+          <button type="button" id="schedule-refresh" class="link inline">
+            Atualizar
+          </button>
+        </div>
+
+        <div class="toolbar">
+          <label class="check-inline">
+            <input type="checkbox" id="schedule-favs-only" />
+            <span>Somente favoritos</span>
+          </label>
+          <span class="count" id="schedule-note"></span>
+        </div>
+
+        <div id="schedule-week" class="week"></div>
+      </section>
+
+      <section
+        id="catalog-pane"
+        role="tabpanel"
+        aria-labelledby="tab-catalog"
+        hidden
+      >
+          <div class="pane-head">
+            <h2 id="catalog-heading">Lançamentos</h2>
+            <span class="count" id="catalog-count"></span>
+          </div>
+
+          <div class="toolbar">
+            <div class="season-wrap">
+              <label for="catalog-mode">Listar</label>
+              <select id="catalog-mode" aria-label="Tipo de listagem"></select>
+            </div>
+            <div class="season-wrap" id="catalog-season-wrap">
+              <label for="catalog-season">Temporada</label>
+              <select id="catalog-season" aria-label="Temporada"></select>
+            </div>
+            <div class="season-wrap">
+              <label for="catalog-year">Ano</label>
+              <select id="catalog-year" aria-label="Ano"></select>
+            </div>
+            <div class="season-wrap">
+              <label for="catalog-genre">Gênero</label>
+              <select id="catalog-genre" aria-label="Gênero"></select>
+            </div>
+            <div class="season-wrap">
+              <label for="catalog-format">Tipo</label>
+              <select id="catalog-format" aria-label="Tipo"></select>
+            </div>
+          </div>
+
+          <div class="toolbar">
+            <button type="button" id="catalog-now" class="icon-btn">
+              Temporada atual
+            </button>
+            <button type="button" id="catalog-reset" class="icon-btn">
+              Limpar filtros
+            </button>
+            <input
+              id="catalog-filter"
+              class="filter"
+              type="text"
+              placeholder="Filtrar esta página por nome…"
+              autocomplete="off"
+              aria-label="Filtrar o catálogo por nome"
+            />
+          </div>
+
+          <p class="hint-line">
+            O catálogo vem do AniList. Clique em um título para procurá-lo em
+            todas as fontes, incluindo as em português.
+          </p>
+
+          <ul id="catalog" class="cards"></ul>
+
+          <div class="pager">
+            <button type="button" id="catalog-prev" class="icon-btn" disabled>
+              &larr; Anterior
+            </button>
+            <span class="count" id="catalog-page"></span>
+            <button type="button" id="catalog-next" class="icon-btn" disabled>
+              Próxima &rarr;
+            </button>
+          </div>
+      </section>
+
+      <section
+        id="favorites-pane"
+        role="tabpanel"
+        aria-labelledby="tab-favorites"
+        hidden
+      >
+        <div class="pane-head">
+          <h2>Favoritos</h2>
+          <span class="count" id="favorites-count"></span>
+        </div>
+        <ul id="favorites" class="cards"></ul>
+        <div id="favorites-empty" class="empty" hidden>
+          <p class="empty-title">Nenhum favorito ainda</p>
+          <p class="empty-sub">
+            A estrela em qualquer resultado de busca guarda o título aqui — e
+            os episódios dele passam a aparecer destacados no Calendário.
+          </p>
+        </div>
+      </section>
+
+      <section
+        id="history-pane"
+        role="tabpanel"
+        aria-labelledby="tab-history"
+        hidden
+      >
+        <div class="pane-head">
+          <h2>Continuar assistindo</h2>
+          <span class="count" id="history-count"></span>
+          <button type="button" id="clear-history" class="link inline">
+            Limpar histórico
+          </button>
+        </div>
+        <ul id="history" class="cards"></ul>
+        <div id="history-empty" class="empty" hidden>
+          <p class="empty-title">Nada assistido ainda</p>
+          <p class="empty-sub">
+            Os episódios que você abrir aparecem aqui, para continuar de onde
+            parou.
+          </p>
+        </div>
+      </section>
+
+      <section
+        id="results-pane"
+        role="tabpanel"
+        aria-labelledby="tab-results"
+        hidden
+      >
+        <div class="pane-head">
+          <h2 id="results-heading">Resultados</h2>
+          <span class="count" id="results-count"></span>
+        </div>
+
+        <div class="toolbar" id="results-toolbar" hidden>
+          <input
+            id="results-filter"
+            class="filter"
+            type="text"
+            placeholder="Filtrar por nome…"
+            autocomplete="off"
+            aria-label="Filtrar resultados por nome"
+          />
+          <select id="results-sort" aria-label="Ordenar resultados">
+            <option value="relevance">Ordem: relevância</option>
+            <option value="name">Ordem: nome (A–Z)</option>
+            <option value="year">Ordem: mais recentes</option>
+          </select>
+          <span class="count" id="filter-count"></span>
+        </div>
+
+        <ul id="results" class="cards"></ul>
+
+        <div id="results-empty" class="empty" hidden>
+          <p class="empty-title">Nada para mostrar ainda</p>
+          <p class="empty-sub">
+            Busque um título acima. Dica: aperte <kbd>Ctrl</kbd> +
+            <kbd>K</kbd> de qualquer lugar para voltar ao campo de busca.
+          </p>
+        </div>
+      </section>
+
+      <section id="episodes-pane" aria-labelledby="episodes-title" hidden>
+        <button id="back-to-results" class="link" type="button">
+          &larr; Voltar
+        </button>
+
+        <div class="pane-head">
+          <h2 id="episodes-title">Episódios</h2>
+          <span class="count" id="episodes-count"></span>
+          <button
+            type="button"
+            id="fav-toggle"
+            class="star-btn header-star"
+            aria-pressed="false"
+            title="Adicionar aos favoritos"
+          >
+            ☆
+          </button>
+        </div>
+
+        <div class="toolbar">
+          <div id="season-wrap" class="season-wrap" hidden>
+            <label for="season">Temporada</label>
+            <select id="season" aria-label="Temporada"></select>
+          </div>
+          <input
+            id="episode-filter"
+            class="filter"
+            type="text"
+            placeholder="Filtrar episódios…"
+            autocomplete="off"
+            aria-label="Filtrar episódios"
+            hidden
+          />
+        </div>
+
+        <p id="title-meta" class="title-meta" hidden></p>
+
+        <div id="gate-note" class="note" hidden>
+          <div class="note-body">
+            <strong>Verificação de robô</strong>
+            <span id="gate-message"></span>
+          </div>
+          <div class="note-actions">
+            <button type="button" id="gate-check" class="icon-btn">
+              Verificar agora
+            </button>
+            <button type="button" id="gate-settings" class="icon-btn">
+              Configurar
+            </button>
+          </div>
+        </div>
+
+        <ul id="episodes" class="episodes"></ul>
+      </section>
+    </main>
+
+    <!-- Episode action: quality + play or download -->
+    <div id="episode-modal" class="modal" role="dialog" aria-modal="true" hidden>
+      <div class="modal-box">
+        <h3 id="episode-modal-title">Episódio</h3>
+        <p class="modal-sub" id="episode-modal-sub"></p>
+
+        <label class="field">
+          <span>Qualidade</span>
+          <select id="quality" aria-label="Qualidade"></select>
+        </label>
+        <p class="modal-sub">
+          As fontes não publicam todas as mesmas opções — isto é uma
+          preferência, e cada uma escolhe o stream mais próximo que tiver.
+        </p>
+
+        <div class="actions">
+          <button type="button" id="act-play" class="primary">Assistir</button>
+          <button type="button" id="act-download">Baixar</button>
+        </div>
+        <button id="episode-modal-cancel" type="button" class="link">
+          Cancelar
+        </button>
+      </div>
+    </div>
+
+    <!-- Helper-browser settings -->
+    <div id="gate-modal" class="modal" role="dialog" aria-modal="true" hidden>
+      <div class="modal-box">
+        <h3>Verificação de robô</h3>
+        <p class="modal-sub">
+          Algumas fontes pedem que o navegador prove que você não é um robô. O
+          GoAnime abre um navegador de verdade para você passar pela
+          verificação uma vez — depois disso ela fica salva. Estas opções
+          controlam qual navegador é usado.
+        </p>
+
+        <label class="check">
+          <input type="checkbox" id="gate-bundled" />
+          <span>
+            Usar o navegador embutido
+            <small
+              >Baixa um Chromium próprio em vez de usar o Chrome que você já
+              tem instalado. Mais lento na primeira vez, mas isolado do seu
+              perfil.</small
+            >
+          </span>
+        </label>
+
+        <label class="check">
+          <input type="checkbox" id="gate-headless" />
+          <span>
+            Esconder a janela do navegador
+            <small
+              >Só serve quando não há tela (acesso remoto). A verificação
+              normalmente <em>falha</em> escondida, então deixe desligado a
+              menos que nada mais funcione.</small
+            >
+          </span>
+        </label>
+
+        <label class="field">
+          <span>Navegador a usar</span>
+          <select id="gate-channel">
+            <option value="">Automático</option>
+            <option value="chrome">Google Chrome</option>
+            <option value="chrome-beta">Chrome Beta</option>
+            <option value="msedge">Microsoft Edge</option>
+          </select>
+        </label>
+
+        <div class="actions">
+          <button type="button" id="gate-save" class="primary">Salvar</button>
+          <button type="button" id="gate-cancel">Cancelar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Player picker -->
+    <div id="player-modal" class="modal" role="dialog" aria-modal="true" hidden>
+      <div class="modal-box">
+        <h3>Assistir com…</h3>
+        <p class="modal-sub">
+          Sua escolha fica salva. Você pode trocar quando quiser pelo botão
+          Player, no topo da janela.
+        </p>
+        <div id="player-choices" class="player-choices"></div>
+        <button id="player-modal-cancel" type="button" class="link">
+          Cancelar
+        </button>
+      </div>
+    </div>
+
+    <!-- Downloads drawer -->
+    <aside id="downloads-drawer" class="drawer" aria-label="Downloads" hidden>
+      <div class="drawer-head">
+        <h3>Downloads</h3>
+        <button type="button" id="drawer-close" class="icon-btn">Fechar</button>
+      </div>
+      <div class="drawer-actions">
+        <button type="button" id="open-folder" class="icon-btn">
+          Abrir pasta
+        </button>
+        <button type="button" id="clear-finished" class="icon-btn">
+          Limpar concluídos
+        </button>
+      </div>
+      <p class="drawer-path" id="downloads-path"></p>
+      <ul id="downloads-list" class="downloads"></ul>
+      <p id="downloads-empty" class="empty-sub">Nenhum download ainda.</p>
+    </aside>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <script src="main.js"></script>
+  </body>
+</html>

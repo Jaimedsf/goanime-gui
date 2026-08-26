@@ -18,7 +18,15 @@ result
 # Local build binaries
 goanime
 goanime-test
+# Leading slash matters: an unanchored "goanime-gui" would also match the
+# cmd/goanime-gui source directory.
+/goanime.exe
+/goanime-gui
+/goanime-gui.exe
 build/goanime-local
+
+# Wails build output
+build/bin/
 
 #Ignore vscode AI rules
 .github/copilot-instructions.md

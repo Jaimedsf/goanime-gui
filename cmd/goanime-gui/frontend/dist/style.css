@@ -1,0 +1,1406 @@
+:root {
+  --bg: #0f1115;
+  --bg-elevated: #161a22;
+  --bg-hover: #1f2530;
+  --fg: #e8eaed;
+  --fg-muted: #9aa0a6;
+  --accent: #7aa2f7;
+  --accent-hover: #9ab8ff;
+  --border: #262b36;
+  --danger: #f7768e;
+  --warn: #e0af68;
+  --ok: #9ece6a;
+  --radius: 10px;
+}
+
+/* The webview follows the OS theme; keep the app readable in light mode
+   instead of forcing a dark page onto a light desktop. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f5f6f8;
+    --bg-elevated: #ffffff;
+    --bg-hover: #eceef2;
+    --fg: #1b1f27;
+    --fg-muted: #5f6672;
+    --accent: #3b62c4;
+    --accent-hover: #2b4ea8;
+    --border: #dcdfe6;
+    --danger: #c1344e;
+    --warn: #9a6b12;
+    --ok: #3f7d20;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------- header ---------- */
+
+header {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 20px;
+  color: var(--accent);
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+#search-form {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.input-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.input-wrap input {
+  width: 100%;
+  padding: 9px 62px 9px 13px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 14px;
+}
+
+.hint {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  font-family: inherit;
+  letter-spacing: 0.5px;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 2px 5px;
+  pointer-events: none;
+}
+
+#search-form select,
+#search-form button {
+  padding: 9px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+#search-form button[type="submit"] {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  border-color: var(--accent);
+}
+
+#search-form button[type="submit"]:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+#search-form button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.ghost:hover {
+  background: var(--bg-hover);
+}
+
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chip:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.chip-label {
+  color: var(--fg-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.chip-value {
+  font-weight: 600;
+}
+
+/* ---------- layout ---------- */
+
+main {
+  /* Narrow side padding and a high ceiling: the calendar is seven columns
+     wide, and every pixel spent on margins is a pixel it has to scroll. */
+  padding: 18px 16px 48px;
+  max-width: 1760px;
+  margin: 0 auto;
+}
+
+.status {
+  min-height: 22px;
+  color: var(--fg-muted);
+  margin-bottom: 12px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status.error {
+  color: var(--danger);
+}
+
+.status .spinner {
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex: none;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status .spinner {
+    animation-duration: 2s;
+  }
+  .card,
+  .episode {
+    transition: none;
+  }
+}
+
+.pane-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 6px 0 12px;
+}
+
+h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.count {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.season-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+.season-wrap select,
+.filter {
+  padding: 7px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--fg);
+  font-size: 13px;
+}
+
+.filter {
+  min-width: 220px;
+}
+
+.note {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--warn);
+  background: var(--bg-elevated);
+  border-radius: 0 8px 8px 0;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+.empty {
+  text-align: center;
+  padding: 56px 20px;
+  color: var(--fg-muted);
+}
+
+.empty-title {
+  font-size: 15px;
+  color: var(--fg);
+  margin: 0 0 6px;
+}
+
+.empty-sub {
+  font-size: 13px;
+  margin: 0;
+}
+
+.empty kbd {
+  font-family: inherit;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+/* ---------- result cards ---------- */
+
+.cards {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.15s, border-color 0.15s;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  position: relative;
+}
+
+.card:hover,
+.card:focus-visible {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+}
+
+.card-image {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  background: var(--bg);
+  object-fit: cover;
+  display: block;
+}
+
+.card-body {
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.card-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--border);
+  color: var(--fg-muted);
+}
+
+.badge.src {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.badge.gate {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+/* ---------- episodes ---------- */
+
+.episodes {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 14px;
+}
+
+.episode {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: transform 0.15s, border-color 0.15s;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.episode:hover,
+.episode:focus-within {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+}
+
+.episode.busy {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.episode-main {
+  all: unset;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.episode-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: var(--bg);
+  display: block;
+}
+
+.episode-info {
+  padding: 9px 12px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.episode-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.episode-sub {
+  font-size: 12px;
+  color: var(--fg-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.episode-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.episode:hover .episode-actions,
+.episode:focus-within .episode-actions {
+  opacity: 1;
+}
+
+.icon-btn {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+/* ---------- skeletons ---------- */
+
+.skeleton {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.skeleton-box {
+  background: linear-gradient(
+    90deg,
+    var(--bg-elevated) 25%,
+    var(--bg-hover) 50%,
+    var(--bg-elevated) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.3s infinite;
+}
+
+.skeleton .sk-img {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+}
+
+.skeleton.ep .sk-img {
+  aspect-ratio: 16 / 9;
+}
+
+.skeleton .sk-line {
+  height: 10px;
+  margin: 10px 12px;
+  border-radius: 4px;
+}
+
+.skeleton .sk-line.short {
+  width: 45%;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-box {
+    animation: none;
+  }
+}
+
+/* ---------- links, modal, toast ---------- */
+
+.link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: 10px;
+}
+
+.link:hover {
+  color: var(--accent-hover);
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal[hidden] {
+  display: none;
+}
+
+.modal-box {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 22px;
+  min-width: 340px;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.modal-box h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.modal-sub {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  line-height: 1.45;
+}
+
+.player-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.player-choices button {
+  padding: 11px 13px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 14px;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.player-choices button:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.player-choices button.current {
+  border-color: var(--accent);
+}
+
+.player-choices .tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--fg-muted);
+}
+
+.player-choices .tag.missing {
+  color: var(--danger);
+}
+
+.player-choices .tag.active {
+  color: var(--ok);
+}
+
+.modal #player-modal-cancel {
+  align-self: flex-end;
+  margin: 4px 0 0;
+}
+
+.toast {
+  position: fixed;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 9px 18px;
+  font-size: 13px;
+  z-index: 200;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+
+.toast[hidden] {
+  display: none;
+}
+
+/* ---------- form fields in modals ---------- */
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+.field select {
+  padding: 9px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 14px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.actions button {
+  flex: 1;
+  padding: 11px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.actions button:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.actions button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.actions button.primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+/* ---------- results toolbar ---------- */
+
+#results-sort {
+  padding: 7px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--fg);
+  font-size: 13px;
+}
+
+/* ---------- downloads drawer ---------- */
+
+.drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 380px;
+  max-width: 92vw;
+  background: var(--bg-elevated);
+  border-left: 1px solid var(--border);
+  z-index: 90;
+  padding: 18px;
+  overflow-y: auto;
+  box-shadow: -8px 0 28px rgba(0, 0, 0, 0.28);
+}
+
+.drawer[hidden] {
+  display: none;
+}
+
+.drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.drawer-head h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.drawer-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.drawer-path {
+  font-size: 11px;
+  color: var(--fg-muted);
+  word-break: break-all;
+  margin: 0 0 14px;
+}
+
+.downloads {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.dl {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 11px 12px;
+  background: var(--bg);
+}
+
+.dl-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.dl-title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.dl-bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+
+.dl-fill {
+  height: 100%;
+  background: var(--accent);
+  width: 0%;
+  transition: width 0.25s linear;
+}
+
+.dl.done .dl-fill {
+  background: var(--ok);
+}
+
+.dl.error .dl-fill,
+.dl.cancelled .dl-fill {
+  background: var(--danger);
+}
+
+.dl-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  margin-top: 7px;
+}
+
+.dl-error {
+  font-size: 11px;
+  color: var(--danger);
+  margin-top: 6px;
+  word-break: break-word;
+}
+
+.chip-value.active {
+  color: var(--accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dl-fill {
+    transition: none;
+  }
+}
+
+/* ---------- brand / home ---------- */
+
+.brand {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.brand:hover {
+  color: var(--accent-hover);
+}
+
+.link.inline {
+  margin: 0 0 0 auto;
+}
+
+/* ---------- favorite star ---------- */
+
+.star-btn {
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid transparent;
+  color: #fff;
+  border-radius: 50%;
+  width: 30px;
+  height: 30px;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.star-btn:hover {
+  border-color: var(--warn);
+}
+
+.star-btn[aria-pressed="true"] {
+  color: var(--warn);
+}
+
+.card-star {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+li:hover .card-star,
+.card-star[aria-pressed="true"],
+.card-star:focus-visible {
+  opacity: 1;
+}
+
+.header-star {
+  background: none;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  margin-left: auto;
+}
+
+.header-star[aria-pressed="true"] {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+/* The card is a button, so the star cannot nest inside it. The wrapper
+   provides the positioning context instead. */
+.card-wrap {
+  position: relative;
+}
+
+/* ---------- history cards ---------- */
+
+.card-sub {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.card-progress {
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* ---------- watched episodes ---------- */
+
+.episode.watched .episode-thumb {
+  opacity: 0.45;
+}
+
+.episode.watched .episode-label::after {
+  content: " ✓";
+  color: var(--ok);
+}
+
+.watched-tag {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  background: rgba(0, 0, 0, 0.6);
+  color: var(--ok);
+  border-radius: 5px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 2px 6px;
+}
+
+/* ---------- title metadata ---------- */
+
+.title-meta {
+  margin: -4px 0 14px;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+.title-meta .dot {
+  opacity: 0.5;
+  margin: 0 7px;
+}
+
+.card-date {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.episode-aired {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+/* ---------- gate notice ---------- */
+
+.note {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.note-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 240px;
+}
+
+.note-body strong {
+  color: var(--fg);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.note-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.note.ready {
+  border-left-color: var(--ok);
+}
+
+.note.blocked {
+  border-left-color: var(--danger);
+}
+
+/* ---------- checkbox settings ---------- */
+
+.check {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.check input {
+  margin-top: 3px;
+  flex: none;
+}
+
+.check small {
+  display: block;
+  font-size: 12px;
+  color: var(--fg-muted);
+  line-height: 1.45;
+  margin-top: 2px;
+}
+
+/* ---------- seasonal catalog ---------- */
+
+.hint-line {
+  margin: -4px 0 14px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 22px;
+}
+
+.pager .icon-btn {
+  padding: 7px 14px;
+  font-size: 13px;
+}
+
+.pager .icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  border-color: var(--border);
+}
+
+/* Catalog cards are metadata, not playable items: the score sits on the
+   artwork so the grid stays scannable at a glance. */
+.card-score {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  background: rgba(0, 0, 0, 0.65);
+  color: var(--ok);
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  z-index: 2;
+}
+
+.card-genres {
+  font-size: 11px;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Language is what a Brazilian user scans for first, so PT-BR results get
+   a colour of their own instead of blending into the other badges. */
+.badge.lang-pt {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+/* ---------- weekly airing calendar ---------- */
+
+/* Seven columns, Monday to Sunday. They never wrap: a wrapped week reads as
+   two rows of unrelated days and loses the left-to-right sense of time.
+   `minmax(0, 1fr)` lets them shrink to fit the window, so the common case has
+   no horizontal scrollbar at all. */
+.week {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 10px;
+}
+
+/* Past the point where seven columns stop being readable, scrolling is the
+   lesser evil — a 90px column fits nothing. */
+@media (max-width: 1080px) {
+  .week {
+    grid-template-columns: repeat(7, minmax(168px, 1fr));
+    overflow-x: auto;
+    padding-bottom: 8px;
+  }
+}
+
+.day {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.day.today {
+  border-color: var(--accent);
+}
+
+.day-head {
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.day-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.day.today .day-label {
+  color: var(--accent);
+}
+
+.day-date {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+/* A count of favorites airing that day, so a starred column is obvious
+   before the user scrolls its list. */
+.day-fav {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+
+/* The list scrolls inside the column: a busy Saturday has thirty airings,
+   and letting that set the height of the whole home screen would push the
+   catalog off the page. */
+.day-list {
+  list-style: none;
+  margin: 0;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 430px;
+  overflow-y: auto;
+}
+
+.day-empty {
+  padding: 18px 10px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.airing {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 7px;
+  border: 1px solid transparent;
+  border-left: 3px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.airing:hover {
+  background: var(--bg-hover);
+}
+
+/* Favorites are the point of the calendar: they get the accent stripe, a
+   tinted row and a star, so they read at a glance in a long column. */
+.airing.fav {
+  border-left-color: var(--warn);
+  /* Plain amber first, so an older WebView2 without color-mix still tints
+     the row instead of dropping the declaration and showing nothing. */
+  background: rgba(224, 175, 104, 0.12);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+}
+
+.airing.fav:hover {
+  background: rgba(224, 175, 104, 0.22);
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+}
+
+/* An episode whose time has passed is still worth showing — it is what
+   "what came out on Monday" means — but it is not what the user is waiting
+   for. Dimmed, not faded out: whole columns are past by Thursday, and they
+   have to stay readable. */
+.airing.past {
+  opacity: 0.68;
+}
+
+/* A day earlier in the week recedes at the header, while its list stays as
+   legible as any other — dimming the column too would stack with the rule
+   above and wash the episodes out. */
+.day.past .day-label,
+.day.past .day-date {
+  color: var(--fg-muted);
+  font-weight: 400;
+}
+
+.airing-thumb {
+  width: 34px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--bg);
+}
+
+.airing-body {
+  min-width: 0;
+}
+
+.airing-title {
+  font-size: 12px;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.airing-meta {
+  font-size: 11px;
+  color: var(--fg-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.airing.fav .airing-meta {
+  color: var(--warn);
+}
+
+.check-inline {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+
+/* Skeleton columns. The shared .sk-line sizing is scoped to .skeleton, so
+   the calendar's placeholders carry their own. */
+.day-head .skeleton-box {
+  height: 10px;
+  width: 60%;
+  border-radius: 4px;
+}
+
+.day-list .skeleton-box {
+  height: 44px;
+  border-radius: 8px;
+  flex: none;
+}
+
+/* ---------- tabs ---------- */
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  margin: -4px 0 18px;
+  /* The tabs scroll sideways only if they ever stop fitting, and the
+     scrollbar itself is hidden — five tabs do not need one, and setting
+     overflow on one axis makes the other compute to `auto`, which is what
+     put a stray vertical scrollbar on the bar. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 15px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+  /* The bottom border doubles as the selected marker, so it must sit on top
+     of the bar's own border rather than above it. */
+  margin-bottom: -1px;
+}
+
+.tab:hover {
+  color: var(--fg);
+}
+
+.tab[aria-selected="true"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+/* How many titles a library tab holds, so the number is readable without
+   opening the tab. */
+.tab-count {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  background: var(--bg-hover);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.tab[aria-selected="true"] .tab-count {
+  color: var(--accent);
+}
+
+/* ---------- artwork fallback ---------- */
+
+/* Shown when a cover fails to load twice. It borrows the failed image's own
+   class, so it inherits that image's exact size and shape and the grid does
+   not shift. */
+.art-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-hover);
+  color: var(--fg-muted);
+  font-weight: 700;
+  user-select: none;
+}
+
+.art-fallback.card-image {
+  font-size: 34px;
+}
+
+.art-fallback.airing-thumb {
+  font-size: 15px;
+}
