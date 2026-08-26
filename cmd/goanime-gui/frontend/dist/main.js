@@ -57,6 +57,7 @@ const els = {
   scheduleFavsOnly: $("schedule-favs-only"),
 
   resultsPane: $("results-pane"),
+  backToTab: $("back-to-tab"),
   results: $("results"),
   resultsCount: $("results-count"),
   resultsEmpty: $("results-empty"),
@@ -143,6 +144,10 @@ const state = {
   downloads: new Map(),
   catalog: { items: [], query: null, page: 1, hasNext: false },
   tab: "schedule", // active tab id
+  // Which of the three layers is on screen: a tab, the search results, or the
+  // episode list. returnTo is what the episode list was opened from.
+  view: "tab",
+  returnTo: "tab",
   // Tabs load their contents the first time they are opened. AniList is
   // rate-limited, and loading all five at boot is what used to earn a 429.
   tabsLoaded: new Set(),
@@ -276,43 +281,110 @@ function episodeKey(ep) {
 // called the first time the tab is opened and never again on its own — a tab
 // whose data can go stale re-runs it from the action that changed the data
 // (toggling a favorite, clearing the history) rather than on every visit.
+//
+// Search results are deliberately absent: the header's search box is the only
+// way to them, so they open over the tabs the way the episode list does.
 const TABS = {
   schedule: { pane: () => els.schedulePane, load: () => loadSchedule() },
   catalog: { pane: () => els.catalogPane, load: () => initCatalog() },
-  results: { pane: () => els.resultsPane, load: null },
   favorites: { pane: () => els.favoritesPane, load: () => loadFavorites() },
   history: { pane: () => els.historyPane, load: () => loadHistory() },
 };
 
-// showTab switches panels. It also leaves the episode drill-down, which is
-// not a tab: it sits on top of whichever tab opened it.
-function showTab(id) {
-  if (!TABS[id]) id = "schedule";
-  state.tab = id;
-
-  for (const [key, spec] of Object.entries(TABS)) {
-    spec.pane().hidden = key !== id;
-  }
+// hidePanes clears every view, so each show* function only has to reveal its
+// own and cannot leave two on screen at once.
+function hidePanes() {
+  for (const spec of Object.values(TABS)) spec.pane().hidden = true;
+  els.resultsPane.hidden = true;
   els.episodesPane.hidden = true;
+}
 
+// markTabs highlights the active tab, or none while an overlay (results,
+// episodes) is covering them.
+function markTabs(id) {
   for (const btn of els.tabs.querySelectorAll(".tab")) {
     btn.setAttribute("aria-selected", String(btn.dataset.tab === id));
   }
-
-  if (!state.tabsLoaded.has(id)) {
-    state.tabsLoaded.add(id);
-    // Marked loaded before the call, not after: the loaders are async, and
-    // a second click while the first is in flight must not fire it twice.
-    if (TABS[id].load) TABS[id].load();
-  }
 }
 
-// showEpisodes opens the drill-down over the current tab. The tab bar stays
-// visible and stays on the tab you came from, so clicking it is a way back.
+function showTab(id) {
+  if (!TABS[id]) id = "schedule";
+  state.tab = id;
+  state.view = "tab";
+
+  hidePanes();
+  TABS[id].pane().hidden = false;
+  markTabs(id);
+  loadTabOnce(id);
+}
+
+// loadTabOnce runs a tab's loader the first time it is opened.
+//
+// The `catch` is the point. A loader that fails clears the mark, so opening
+// the tab again retries it. Marking a tab loaded up front and never clearing
+// it meant one transient AniList hiccup left that tab blank for the rest of
+// the session with no way to recover — clicking it again did nothing at all.
+async function loadTabOnce(id) {
+  const spec = TABS[id];
+  if (!spec.load || state.tabsLoaded.has(id)) return;
+
+  // Marked before awaiting, so a second click while the first load is still
+  // in flight does not fire it twice.
+  state.tabsLoaded.add(id);
+
+  let ok = false;
+  try {
+    ok = (await spec.load()) !== false;
+  } catch (err) {
+    console.error(`a aba "${id}" falhou ao carregar`, err);
+  }
+  if (!ok) state.tabsLoaded.delete(id);
+}
+
+// showResults opens the search results over the tabs. They are reached only
+// from the header's search box, so no tab stays highlighted.
+function showResults() {
+  hidePanes();
+  els.resultsPane.hidden = false;
+  state.view = "results";
+  markTabs(null);
+}
+
+// showEpisodes opens the drill-down over whatever was on screen, remembering
+// what that was so "Voltar" returns there instead of guessing.
 function showEpisodes(title) {
   els.episodesTitle.textContent = title || "Episódios";
-  for (const spec of Object.values(TABS)) spec.pane().hidden = true;
+  if (state.view !== "episodes") state.returnTo = state.view;
+  hidePanes();
   els.episodesPane.hidden = false;
+  state.view = "episodes";
+  markTabs(null);
+}
+
+// goBack leaves an overlay for whatever is underneath it.
+function goBack() {
+  if (state.view === "episodes" && state.returnTo === "results") showResults();
+  else showTab(state.tab);
+  setStatus("");
+}
+
+// withTimeout gives up on a bridge call that never settles. Without it such a
+// call leaves a skeleton on screen with no error and no way out — which is
+// exactly what "carregamento infinito" looks like from the outside.
+function withTimeout(promise, ms, what) {
+  let timer;
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise((_, reject) => {
+      timer = setTimeout(
+        () =>
+          reject(
+            new Error(`${what} não respondeu em ${Math.round(ms / 1000)}s`)
+          ),
+        ms
+      );
+    }),
+  ]);
 }
 
 function skeletons(container, count, extraClass) {
@@ -520,10 +592,17 @@ async function loadSchedule({ force = false } = {}) {
   els.scheduleRefresh.disabled = true;
 
   try {
-    const week = force ? await app().RefreshSchedule() : await app().Schedule();
+    // A forced refresh refetches every page, and the AniList gate spaces
+    // those out, so the ceiling is generous — but it is a ceiling.
+    const week = await withTimeout(
+      force ? app().RefreshSchedule() : app().Schedule(),
+      90000,
+      "O calendário"
+    );
     if (!current()) return;
     state.schedule = week;
     renderSchedule();
+    return true;
   } catch (err) {
     if (!current()) return;
     console.warn("Schedule() failed", err);
@@ -535,8 +614,12 @@ async function loadSchedule({ force = false } = {}) {
       `Não foi possível carregar o calendário: ${errText(err)}`,
       () => loadSchedule({ force: true })
     );
+    return false;
   } finally {
-    if (current()) els.scheduleRefresh.disabled = false;
+    // Unconditionally, not only for the current run: a superseded load that
+    // left the button disabled was one of the ways the calendar got stuck
+    // looking like it was still working.
+    els.scheduleRefresh.disabled = false;
   }
 }
 
@@ -788,12 +871,17 @@ async function initCatalog() {
     els.catalogSeason.value = season;
     els.catalogYear.value = String(year);
   } catch (err) {
+    // The pickers failing is not a reason to show an empty tab. The backend
+    // normalises an empty query into "the season airing now", so the grid can
+    // still be filled; only the dropdowns are missing.
     console.warn("catalog pickers failed to load", err);
-    return;
+    setStatus(`Os filtros do catálogo não carregaram: ${errText(err)}`, {
+      error: true,
+    });
   }
 
   syncCatalogControls();
-  await loadCatalog(1);
+  return loadCatalog(1);
 }
 
 function fillOptions(select, options) {
@@ -845,7 +933,7 @@ async function loadCatalog(page) {
   els.catalogNext.disabled = true;
 
   try {
-    const result = await app().Browse(query);
+    const result = await withTimeout(app().Browse(query), 60000, "O catálogo");
 
     state.catalog = {
       items: result.items || [],
@@ -860,6 +948,7 @@ async function loadCatalog(page) {
     els.catalogNext.disabled = !result.hasNextPage;
 
     applyCatalogView();
+    return true;
   } catch (err) {
     console.error(err);
     state.catalog.items = [];
@@ -869,6 +958,7 @@ async function loadCatalog(page) {
       () => loadCatalog(page)
     );
     els.catalogPage.textContent = "";
+    return false;
   }
 }
 
@@ -1039,7 +1129,7 @@ async function searchByTitle(title, queryText, run) {
   const seq = ++state.searchSeq;
   const current = () => seq === state.searchSeq;
 
-  showTab("results");
+  showResults();
   els.query.value = queryText;
   els.resultsEmpty.hidden = true;
   els.resultsToolbar.hidden = true;
@@ -1100,7 +1190,7 @@ async function runSearch(query, source) {
   const seq = ++state.searchSeq;
   const current = () => seq === state.searchSeq;
 
-  showTab("results");
+  showResults();
   els.resultsEmpty.hidden = true;
   els.resultsToolbar.hidden = true;
   els.resultsCount.textContent = "";
@@ -2168,8 +2258,12 @@ els.catalogNext.addEventListener("click", () => {
 
 els.back.addEventListener("click", () => {
   state.result = null;
-  // The episode view sits on top of a tab without changing which tab is
-  // active, so going back is just showing it again.
+  goBack();
+});
+
+// The results view has its own way back, since it is no longer a tab.
+els.backToTab.addEventListener("click", () => {
+  state.result = null;
   showTab(state.tab);
   setStatus("");
 });
@@ -2287,8 +2381,9 @@ document.addEventListener("keydown", (e) => {
     else if (!els.episodeModal.hidden) closeEpisodeModal(null);
     else if (!els.playerModal.hidden) closePlayerModal(null);
     else if (!els.drawer.hidden) els.drawer.hidden = true;
-    else if (!els.episodesPane.hidden) els.back.click();
+    else if (state.view === "episodes") els.back.click();
     else if (state.searching) els.cancelBtn.click();
+    else if (state.view === "results") showTab(state.tab);
     else if (state.tab !== "schedule") showTab("schedule");
   }
 });

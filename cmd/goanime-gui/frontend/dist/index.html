@@ -84,17 +84,6 @@
         <button
           type="button"
           class="tab"
-          id="tab-results"
-          data-tab="results"
-          role="tab"
-          aria-selected="false"
-          aria-controls="results-pane"
-        >
-          Busca
-        </button>
-        <button
-          type="button"
-          class="tab"
           id="tab-favorites"
           data-tab="favorites"
           role="tab"
@@ -255,12 +244,14 @@
         </div>
       </section>
 
-      <section
-        id="results-pane"
-        role="tabpanel"
-        aria-labelledby="tab-results"
-        hidden
-      >
+      <!-- Search results are not a tab: the search box in the header is the
+           only way in, and the results replace the current tab the way the
+           episode list does, with a way back to where you were. -->
+      <section id="results-pane" aria-labelledby="results-heading" hidden>
+        <button id="back-to-tab" class="link" type="button">
+          &larr; Voltar
+        </button>
+
         <div class="pane-head">
           <h2 id="results-heading">Resultados</h2>
           <span class="count" id="results-count"></span>

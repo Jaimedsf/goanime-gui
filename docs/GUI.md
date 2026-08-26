@@ -237,8 +237,13 @@ falling back to the shared `api.FetchAnimeFromAniList` client.
 
 ## Tabs
 
-The main view is five tabs — **Calendário**, **Catálogo**, **Busca**,
-**Favoritos**, **Histórico** — rather than one long scrolling page.
+The main view is four tabs — **Calendário**, **Catálogo**, **Favoritos**,
+**Histórico** — rather than one long scrolling page.
+
+**Search results are not a tab.** The header's search box is the only way to
+them, so a tab would have been a second door to the same room, empty until
+someone used the first one. They open *over* the tabs instead, like the
+episode list, with their own way back.
 
 The reason is not only navigation. **Only the active tab loads.** AniList is
 rate-limited, and a cold start that fetched the calendar (several pages), the
@@ -248,13 +253,20 @@ calendar should be. Opening on the calendar alone cuts that to a handful of
 requests.
 
 - A tab's loader runs the **first time it is opened**, and never again on its
-  own. Data that can go stale is refreshed by the action that changed it:
+  own — but **a loader that fails clears the mark, so opening the tab again
+  retries**. Without that, one transient AniList hiccup left the tab blank for
+  the rest of the session with no way back: clicking it again did nothing,
+  because it was already marked loaded. Data that can go stale is refreshed by the action that changed it:
   starring a title reloads Favoritos and the calendar's highlights, clearing
   the history reloads Histórico.
 - The Favoritos and Histórico badges are filled at boot from a **local** read
   of the library file, so the counts are there without loading either tab.
-- The episode list is **not** a tab. It opens on top of whichever tab you
-  came from, and both "← Voltar" and clicking any tab leave it.
+- The episode list is **not** a tab either. It opens on top of whatever was
+  on screen and remembers what that was, so "← Voltar" returns to the search
+  results if that is where you came from, and to the tab otherwise.
+- Every bridge call that paints a skeleton is wrapped in **`withTimeout`**. A
+  call that never settles used to leave that skeleton up with no error and no
+  way out — indistinguishable from loading forever.
 
 ## Weekly calendar
 
