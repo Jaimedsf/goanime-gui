@@ -222,9 +222,26 @@ func History() []HistoryEntry {
 	defer libMu.Unlock()
 
 	lib := loadLocked()
+
+	// Copied newest-first, then sorted *stably*. Both halves matter.
+	//
+	// WatchedAt is time.Now() at the moment of the write, and clocks are not
+	// infinitely fine: on Windows the granularity is around 15ms, so two
+	// episodes watched in quick succession land on the identical timestamp.
+	// After() then reports false both ways, sort.Slice is free to order them
+	// however it likes, and RecentlyWatched -- which takes the first entry
+	// per title -- showed whichever one it happened to get. That is the
+	// failure: the home screen listing episode 2 as the last one watched
+	// when the user had just finished 3.
+	//
+	// lib.History is in append order, so reversing it puts later writes
+	// ahead of earlier ones, and a stable sort leaves that order alone
+	// wherever the timestamps tie.
 	out := make([]HistoryEntry, len(lib.History))
-	copy(out, lib.History)
-	sort.Slice(out, func(i, j int) bool {
+	for i := range lib.History {
+		out[len(lib.History)-1-i] = lib.History[i]
+	}
+	sort.SliceStable(out, func(i, j int) bool {
 		return out[i].WatchedAt.After(out[j].WatchedAt)
 	})
 	return out
@@ -276,19 +293,27 @@ func RecordWatch(r SearchResult, ep EpisodeResult) error {
 		EpisodeNum:    ep.Num,
 		EpisodeTitle:  ep.Title,
 		SeasonID:      ep.SeasonID,
-		WatchedAt:     time.Now(),
+		WatchedAt:     historyNow(),
 	})
 
 	// Trim the oldest entries once the cap is exceeded.
+	//
+	// A plain tail slice, not a sort. Entries are only ever appended, so the
+	// newest are already at the end and the last historyLimit of them are
+	// exactly the ones to keep. The sort that used to do this also *left*
+	// the slice in newest-first order, which quietly destroyed the append
+	// order History() above depends on to break timestamp ties.
 	if len(lib.History) > historyLimit {
-		sort.Slice(lib.History, func(i, j int) bool {
-			return lib.History[i].WatchedAt.After(lib.History[j].WatchedAt)
-		})
-		lib.History = lib.History[:historyLimit]
+		lib.History = lib.History[len(lib.History)-historyLimit:]
 	}
 
 	return saveLocked()
 }
+
+// historyNow is the clock RecordWatch stamps entries with. A var so tests
+// can pin it and exercise what a real machine only produces by accident:
+// several watches sharing one timestamp.
+var historyNow = time.Now
 
 // episodeKeyOf rebuilds the episode key from a stored entry.
 func episodeKeyOf(h HistoryEntry) string {

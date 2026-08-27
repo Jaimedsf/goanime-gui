@@ -13,7 +13,24 @@ import (
 func withTempLibrary(t *testing.T) {
 	t.Helper()
 
-	dir := t.TempDir()
+	// Deliberately not t.TempDir(): it fails the test when its own cleanup
+	// cannot remove the tree, and on Windows that happens regularly here.
+	// These tests write the library file hundreds of times through a
+	// create-temp-then-rename, and a virus scanner or the search indexer only
+	// has to hold one of those files open for an instant for RemoveAll to
+	// answer "directory not empty". A cleanup that loses the race says
+	// nothing about the code under test, so it retries once and then lets go.
+	dir, err := os.MkdirTemp("", "goanime-library-*")
+	if err != nil {
+		t.Fatalf("create a temporary library directory: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			time.Sleep(100 * time.Millisecond)
+			_ = os.RemoveAll(dir)
+		}
+	})
+
 	t.Setenv("HOME", dir)
 	t.Setenv("USERPROFILE", dir) // os.UserHomeDir on Windows
 
@@ -209,6 +226,97 @@ func TestRecentlyWatchedIsOnePerTitle(t *testing.T) {
 	}
 	if recent[0].EpisodeNumber != "3" {
 		t.Fatalf("recent entry is episode %q, want the latest (3)", recent[0].EpisodeNumber)
+	}
+}
+
+// freezeHistoryClock makes every RecordWatch stamp the same instant, which
+// is what a coarse clock does on its own: Windows resolves time.Now to
+// roughly 15ms, so episodes watched back to back genuinely share a
+// timestamp. Pinning it turns a Windows-only flake into a fact every
+// platform checks.
+func freezeHistoryClock(t *testing.T) {
+	t.Helper()
+	at := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+	prev := historyNow
+	historyNow = func() time.Time { return at }
+	t.Cleanup(func() { historyNow = prev })
+}
+
+// With every entry on the same timestamp, ordering has to fall back to the
+// order the writes happened in. It used to fall back to whatever
+// sort.Slice's unstable partitioning produced, so the home screen would
+// report an episode the user had watched two episodes ago as the latest.
+func TestRecentlyWatchedPrefersTheLastWriteOnATiedClock(t *testing.T) {
+	withTempLibrary(t)
+	freezeHistoryClock(t)
+	r := sampleResult()
+
+	for _, n := range []string{"1", "2", "3", "4", "5"} {
+		if err := RecordWatch(r, EpisodeResult{Number: n}); err != nil {
+			t.Fatalf("RecordWatch: %v", err)
+		}
+	}
+
+	recent := RecentlyWatched(10)
+	if len(recent) != 1 {
+		t.Fatalf("RecentlyWatched returned %d entries, want 1 per title", len(recent))
+	}
+	if recent[0].EpisodeNumber != "5" {
+		t.Fatalf("recent entry is episode %q, want the last one written (5)", recent[0].EpisodeNumber)
+	}
+}
+
+// The whole history, not just the first entry, has to come back newest-first
+// when the clock cannot separate the writes.
+func TestHistoryIsNewestFirstOnATiedClock(t *testing.T) {
+	withTempLibrary(t)
+	freezeHistoryClock(t)
+
+	for _, n := range []string{"1", "2", "3"} {
+		r := sampleResult()
+		r.URL = "https://example.test/" + n
+		if err := RecordWatch(r, EpisodeResult{Number: n}); err != nil {
+			t.Fatalf("RecordWatch: %v", err)
+		}
+	}
+
+	got := History()
+	if len(got) != 3 {
+		t.Fatalf("History() returned %d entries, want 3", len(got))
+	}
+	for i, want := range []string{"3", "2", "1"} {
+		if got[i].EpisodeNumber != want {
+			t.Fatalf("History()[%d] = %q, want %q (newest first)", i, got[i].EpisodeNumber, want)
+		}
+	}
+}
+
+// Trimming keeps the newest entries and must not disturb the append order
+// the tie-breaking above relies on. It used to sort the slice in place,
+// leaving it newest-first, so every write after the first trim was ordered
+// against a reversed history.
+func TestHistoryCapKeepsTheNewestAndPreservesOrder(t *testing.T) {
+	withTempLibrary(t)
+
+	for i := 0; i < historyLimit+3; i++ {
+		r := sampleResult()
+		r.URL = "https://example.test/" + itoa(i)
+		if err := RecordWatch(r, EpisodeResult{Number: itoa(i)}); err != nil {
+			t.Fatalf("RecordWatch: %v", err)
+		}
+	}
+
+	got := History()
+	if len(got) != historyLimit {
+		t.Fatalf("history has %d entries, want %d", len(got), historyLimit)
+	}
+	// The three oldest were dropped, so the newest survivor is the last
+	// written and the oldest survivor is number 3.
+	if got[0].EpisodeNumber != itoa(historyLimit+2) {
+		t.Errorf("newest entry is %q, want %q", got[0].EpisodeNumber, itoa(historyLimit+2))
+	}
+	if got[len(got)-1].EpisodeNumber != "3" {
+		t.Errorf("oldest surviving entry is %q, want \"3\"", got[len(got)-1].EpisodeNumber)
 	}
 }
 
