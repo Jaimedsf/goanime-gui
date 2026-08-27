@@ -292,6 +292,63 @@ jobs:
         run: |
           mv build/staging/goanime-windows-amd64.exe build/staging/goanime.exe
 
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build GoAnime desktop app
+        shell: pwsh
+        env:
+          CGO_ENABLED: 0
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          $VERSION = "${{ steps.version.outputs.VERSION }}"
+          $BUILD_TIME = (Get-Date -Format "yyyy-MM-ddTHH:mm:ssZ")
+          $COMMIT = "${{ github.sha }}"
+          $LDFLAGS = "-s -w -H windowsgui"
+          $LDFLAGS = "$LDFLAGS -X github.com/alvarorichard/Goanime/internal/version.Version=$VERSION"
+          $LDFLAGS = "$LDFLAGS -X github.com/alvarorichard/Goanime/internal/version.BuildTime=$BUILD_TIME"
+          $LDFLAGS = "$LDFLAGS -X github.com/alvarorichard/Goanime/internal/version.Commit=$COMMIT"
+
+          # No Wails CLI: the frontend is hand-written ES modules embedded by
+          # //go:embed all:frontend/dist, so a plain go build is the whole
+          # build. The committed rsrc_windows_amd64.syso supplies the icon and
+          # the version resource.
+          #
+          # -H windowsgui links it as a GUI-subsystem binary. Without it
+          # Windows opens an empty console window behind the app on every
+          # launch.
+          go build -tags "desktop,production" -ldflags "$LDFLAGS" -trimpath -o build/staging/goanime-gui.exe ./cmd/goanime-gui
+
+          # Guard the flag: subsystem 2 is GUI, 3 is console. Losing it is
+          # invisible until someone launches the app.
+          $fs = [IO.File]::OpenRead((Resolve-Path "build/staging/goanime-gui.exe"))
+          $br = New-Object IO.BinaryReader($fs)
+          $fs.Seek(0x3C, 'Begin') | Out-Null
+          $peOffset = $br.ReadInt32()
+          $fs.Seek($peOffset + 0x5C, 'Begin') | Out-Null
+          $subsystem = $br.ReadInt16()
+          $br.Close()
+          if ($subsystem -ne 2) {
+            Write-Error "goanime-gui.exe linked as subsystem $subsystem, expected 2 (GUI)."
+            exit 1
+          }
+          Write-Host "Desktop app built, subsystem $subsystem (GUI)"
+
+      - name: Stage the WebView2 bootstrapper
+        shell: pwsh
+        run: |
+          # ~1.5 MB, bundled rather than downloaded at install time so an
+          # offline or proxied install still ends up with a working desktop
+          # app. The installer runs it only when the runtime is missing.
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" `
+            -OutFile "build/staging/MicrosoftEdgeWebview2Setup.exe" `
+            -UserAgent "GoAnime-CI"
+          Get-Item build/staging/MicrosoftEdgeWebview2Setup.exe | Select-Object Name, Length
+
       - name: Download MPV for Windows
         shell: pwsh
         env:

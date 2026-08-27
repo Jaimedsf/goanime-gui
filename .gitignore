@@ -15,15 +15,19 @@ main
 *.dll
 result
 
-# Local build binaries
-goanime
-goanime-test
-# Leading slash matters: an unanchored "goanime-gui" would also match the
-# cmd/goanime-gui source directory.
+# Local build binaries.
+#
+# Every one of these is anchored with a leading slash, and that is load
+# bearing: an unanchored "goanime" matches the cmd/goanime *source directory*
+# too, so git silently ignored every file added under it. That is how
+# cmd/goanime/winres/ and its generated .syso went missing on the first try.
+# The same trap applies to "goanime-gui" and cmd/goanime-gui.
+/goanime
+/goanime-test
 /goanime.exe
 /goanime-gui
 /goanime-gui.exe
-build/goanime-local
+/build/goanime-local
 
 # Wails build output
 build/bin/
@@ -40,3 +44,9 @@ claude
 
 # folder .tokensave
 .tokensave/
+
+# Frontend tooling (lint/format only — the frontend has no build step)
+node_modules/
+
+# Wails generates JS bindings the hand-written frontend does not import.
+cmd/goanime-gui/frontend/src/

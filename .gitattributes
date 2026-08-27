@@ -1,0 +1,74 @@
+# Line endings.
+#
+# The tree was mixed before this file existed: internal/guiapi/schedule.go was
+# CRLF while internal/guiapi/browse.go beside it was LF, because Windows
+# checkouts with core.autocrlf=true convert on checkout and editors then write
+# back inconsistently. The practical damage is that `gofmt -l .` on Windows
+# reports every CRLF file as unformatted, which makes the command useless as a
+# local gate — the CI check passes because the runner sees the LF blobs.
+#
+# So: normalise everything in the repository, and pin the working-tree ending
+# per type for the files where it actually matters.
+#
+# After adding this file, run once:
+#   git add --renormalize .
+* text=auto
+
+# Go tooling assumes LF. gofmt treats CR as content, so a CRLF file is
+# permanently "unformatted" to it.
+*.go            text eol=lf
+go.mod          text eol=lf
+go.sum          text eol=lf
+
+# Shell scripts are executed by bash, which chokes on CR in a shebang line.
+*.sh            text eol=lf
+
+# The frontend is checked by prettier with endOfLine: lf.
+*.js            text eol=lf
+*.mjs           text eol=lf
+*.cjs           text eol=lf
+*.css           text eol=lf
+*.html          text eol=lf
+*.json          text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.md            text eol=lf
+
+# PowerShell and the Inno Setup script are read by Windows tooling.
+*.ps1           text eol=crlf
+*.iss           text eol=crlf
+
+# Binary: never touched, never diffed as text.
+*.png           binary
+*.ico           binary
+*.icns          binary
+*.jpg           binary
+*.jpeg          binary
+*.gif           binary
+*.webp          binary
+*.syso          binary
+*.exe           binary
+*.dll           binary
+*.zip           binary
+*.7z            binary
+*.gz            binary
+*.mp4           binary
+*.ttf           binary
+*.woff          binary
+*.woff2         binary
+
+# Test fixtures are compared byte for byte, so pin them to LF rather than
+# leaving them to the per-type rules above.
+#
+# Not -text, which was the first attempt and is wrong here: these files are
+# already stored as LF, while a Windows checkout under core.autocrlf leaves
+# CRLF in the working tree. Marking them binary freezes whatever the working
+# tree happens to hold, so the next commit would have rewritten every fixture
+# to CRLF and changed what the scrapers are asserted against - including the
+# Go fuzz corpus, where the bytes are the test input.
+internal/scraper/providers/**/testdata/**  text eol=lf
+internal/**/testdata/**                    text eol=lf
+
+# Keep generated and vendored noise out of language stats and diffs.
+cmd/goanime-gui/frontend/dist/js/*.js  linguist-vendored=false
+*.syso                                 linguist-generated=true

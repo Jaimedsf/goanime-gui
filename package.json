@@ -1,0 +1,24 @@
+{
+  "name": "goanime-tooling",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Lint and format tooling for the GoAnime desktop frontend. Not a build step: cmd/goanime-gui/frontend/dist is hand-written ES modules that ship as-is, embedded into the Go binary.",
+  "type": "module",
+  "scripts": {
+    "lint": "eslint cmd/goanime-gui/frontend/dist/js scripts",
+    "lint:fix": "eslint --fix cmd/goanime-gui/frontend/dist/js scripts",
+    "format": "prettier --write cmd/goanime-gui/frontend/dist",
+    "format:check": "prettier --check cmd/goanime-gui/frontend/dist",
+    "check:frontend": "node scripts/check-frontend.mjs",
+    "check": "npm run lint && npm run format:check && npm run check:frontend"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "eslint": "^9.39.0",
+    "globals": "^16.5.0",
+    "prettier": "^3.6.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

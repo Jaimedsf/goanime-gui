@@ -1,4 +1,6 @@
-export const $ = (id) => document.getElementById(id);
+// Local to this module: els below is the only lookup surface the rest of
+// the frontend uses, so exporting this would invite bypassing it.
+const $ = (id) => document.getElementById(id);
 
 export const els = {
   homeBtn: $("home-btn"),

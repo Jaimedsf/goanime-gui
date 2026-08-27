@@ -2,7 +2,6 @@ import { app, errText } from "./bridge.js";
 import { FORMAT_LABELS, STATUS_LABELS } from "./labels.js";
 import { STORAGE, state, writeStorage } from "./state.js";
 import {
-  $,
   clear,
   els,
   episodeKey,

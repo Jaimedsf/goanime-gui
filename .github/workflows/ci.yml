@@ -19,6 +19,38 @@ env:
   GOTOOLCHAIN: local
 
 jobs:
+  frontend:
+    name: Frontend gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install tooling
+        run: npm ci
+
+      # The frontend has no bundler, so nothing else ever parses these files
+      # before a user does. These three steps are the whole safety net.
+      - name: Lint
+        run: npm run lint
+
+      - name: Check formatting
+        run: npm run format:check
+
+      # Cross-checks index.html ids against dom.js against every els.X use.
+      # Deleting markup without deleting its binding is silent at runtime.
+      - name: Check frontend structure
+        run: npm run check:frontend
+
   quality:
     name: Quality gates
     runs-on: ubuntu-latest
@@ -108,7 +140,7 @@ jobs:
 
   test:
     name: Tests (${{ matrix.os }})
-    needs: quality
+    needs: [quality, frontend]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     strategy:
@@ -363,6 +395,53 @@ jobs:
           
           Write-Host "GoAnime binary built successfully with SQLite support"
           Get-ChildItem build/staging/
+
+      - name: Build GoAnime desktop app
+        shell: pwsh
+        env:
+          CGO_ENABLED: 1
+          GOOS: windows
+          GOARCH: amd64
+          CC: gcc
+        run: |
+          $env:PATH = "C:\ProgramData\mingw64\mingw64\bin;$env:PATH"
+
+          # No Wails CLI needed: the frontend is hand-written ES modules that
+          # main.go embeds with //go:embed all:frontend/dist, so there is
+          # nothing to transpile or bundle. A plain go build is the whole
+          # build, and it picks up the committed rsrc_windows_amd64.syso for
+          # the icon and version resource.
+          #
+          # -H windowsgui is the flag that matters. Without it the binary
+          # links as a console subsystem app and Windows opens an empty black
+          # console window behind the GUI every time it starts.
+          go build -tags "desktop,production" -ldflags "-s -w -H windowsgui" -trimpath -o build/staging/goanime-gui.exe ./cmd/goanime-gui
+
+          # Guard the flag above: subsystem 2 is GUI, 3 is console. A silent
+          # regression here is only visible by launching the app.
+          $fs = [IO.File]::OpenRead((Resolve-Path "build/staging/goanime-gui.exe"))
+          $br = New-Object IO.BinaryReader($fs)
+          $fs.Seek(0x3C, 'Begin') | Out-Null
+          $peOffset = $br.ReadInt32()
+          $fs.Seek($peOffset + 0x5C, 'Begin') | Out-Null
+          $subsystem = $br.ReadInt16()
+          $br.Close()
+          if ($subsystem -ne 2) {
+            Write-Error "goanime-gui.exe linked as subsystem $subsystem, expected 2 (GUI). It would open a console window."
+            exit 1
+          }
+          Write-Host "Desktop app built, subsystem $subsystem (GUI)"
+
+      - name: Stage the WebView2 bootstrapper
+        shell: pwsh
+        run: |
+          # ~1.5 MB. Bundled rather than downloaded during setup so an offline
+          # or proxied install still gets a working desktop app; the installer
+          # only runs it when the runtime is actually missing.
+          Invoke-WebRequest -Uri "https://go.microsoft.com/fwlink/p/?LinkId=2124703" `
+            -OutFile "build/staging/MicrosoftEdgeWebview2Setup.exe" `
+            -UserAgent "GoAnime-CI"
+          Get-Item build/staging/MicrosoftEdgeWebview2Setup.exe | Select-Object Name, Length
 
       - name: Download mpv for Windows
         shell: pwsh

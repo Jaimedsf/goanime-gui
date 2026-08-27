@@ -2,9 +2,10 @@
   "$schema": "https://wails.io/schemas/config.v2.json",
   "name": "goanime-gui",
   "outputfilename": "goanime-gui",
-  "frontend:install": "npm install",
-  "frontend:build": "npm run build",
-  "frontend:dev:watcher": "npm run dev",
+  "_comment_frontend": "The frontend is hand-written ES modules served straight out of frontend/dist and embedded by main.go with //go:embed. There is no bundler and no package.json in that directory, so the install/build hooks are deliberately empty — the previous values ('npm install' / 'npm run build') pointed at a package.json that does not exist and would fail any 'wails build'. Lint and format tooling lives in the repository root package.json instead; see npm run check.",
+  "frontend:install": "",
+  "frontend:build": "",
+  "frontend:dev:watcher": "",
   "frontend:dev:serverUrl": "auto",
   "frontend:dir": "cmd/goanime-gui/frontend",
   "wailsjsdir": "cmd/goanime-gui/frontend/src",
@@ -13,7 +14,7 @@
   },
   "info": {
     "productName": "GoAnime",
-    "productVersion": "1.0.0",
+    "productVersion": "1.8.6",
     "copyright": "Copyright © 2026 alvarorichard",
     "comments": "GoAnime desktop (Wails v2)"
   }

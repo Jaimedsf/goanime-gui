@@ -1,120 +1,199 @@
-; GoAnime Windows Installer Script
-; This script is designed to be run from CI with files staged in the build directory
+; GoAnime Windows Installer
+;
+; Run from CI with the binaries staged under build\staging:
+;   staging\goanime.exe          the terminal app
+;   staging\goanime-gui.exe      the desktop app
+;   staging\bin\mpv.exe + *.dll  the bundled player
+;
+; The release workflow rewrites MyAppVersion from the git tag before calling
+; ISCC, so the value below only matters for a local build.
 
 #define MyAppName "GoAnime"
 #define MyAppVersion "1.8.6"
 #define MyAppPublisher "GoAnime Team"
 #define MyAppURL "https://github.com/alvarorichard/GoAnime"
 #define MyAppExeName "goanime.exe"
+#define MyAppGuiExeName "goanime-gui.exe"
 
 [Setup]
 AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
-AppSupportURL={#MyAppURL}
+AppSupportURL={#MyAppURL}/issues
 AppUpdatesURL={#MyAppURL}/releases
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
-; Output directory is relative to the script location
 OutputDir=..\dist
 OutputBaseFilename=GoAnime-Installer-{#MyAppVersion}
-; SetupIconFile=..\assets\icon.ico  ; Uncomment if icon.ico is available
-UninstallDisplayIcon={app}\{#MyAppExeName}
+SetupIconFile=icon.ico
+UninstallDisplayIcon={app}\{#MyAppGuiExeName}
+UninstallDisplayName={#MyAppName} {#MyAppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed=x64compatible
+; WebView2 and the toolchain target Windows 10 1809 and up.
+MinVersion=10.0.17763
+
+; Without this Inno does not broadcast WM_SETTINGCHANGE, and a PATH written by
+; the [Registry] section is invisible until logout. Broadcasting is what the
+; old `setx` call was really after — see the note in [Registry].
+ChangesEnvironment=yes
+
+; Offer to close a running copy instead of failing with "file in use", and
+; restart it afterwards.
+CloseApplications=yes
+RestartApplications=yes
+
+; The installer executable's own Properties -> Details tab.
+VersionInfoVersion={#MyAppVersion}
+VersionInfoCompany={#MyAppPublisher}
+VersionInfoDescription={#MyAppName} Setup
+VersionInfoProductName={#MyAppName}
+VersionInfoCopyright=Copyright (c) alvarorichard
 
 [Languages]
+Name: "brazilianportuguese"; MessagesFile: "compiler:Languages\BrazilianPortuguese.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "addtopath"; Description: "Add GoAnime and MPV to PATH"; GroupDescription: "System Integration:"; Flags: checkedonce
+Name: "addtopath"; Description: "Add GoAnime and mpv to the system PATH"; GroupDescription: "System Integration:"; Flags: checkedonce
 
 [Files]
-; Main application binary (staged in build/staging directory)
 Source: "staging\goanime.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "staging\goanime-gui.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
-; MPV binary and required DLLs for video playback
+; mpv and its DLLs, so playback works with nothing else installed.
 Source: "staging\bin\mpv.exe"; DestDir: "{app}\bin"; Flags: ignoreversion
 Source: "staging\bin\*.dll"; DestDir: "{app}\bin"; Flags: ignoreversion skipifsourcedoesntexist
 
-[Icons]
-; Start Menu shortcuts
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
-Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
+; The WebView2 Evergreen bootstrapper, staged by CI. Copied to {tmp} and run
+; only when the runtime is missing, then deleted. See WebView2Installed below.
+Source: "staging\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist; Check: not WebView2Installed
 
-; Desktop shortcut (optional)
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+[Icons]
+; The desktop app is the headline entry; the terminal one is listed under it
+; rather than being the only thing a user finds in the Start menu.
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppGuiExeName}"; Check: FileExists(ExpandConstant('{app}\{#MyAppGuiExeName}'))
+Name: "{group}\{#MyAppName} (terminal)"; Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppGuiExeName}"; Tasks: desktopicon; Check: FileExists(ExpandConstant('{app}\{#MyAppGuiExeName}'))
 
 [Run]
-; Add to user PATH using setx for immediate effect (works better in Windows Sandbox)
-; This runs before the postinstall option so PATH is ready when GoAnime starts
-Filename: "{cmd}"; Parameters: "/C setx PATH ""%PATH%;{app};{app}\bin"""; Flags: runhidden runascurrentuser; Tasks: addtopath
-; Option to run GoAnime after installation
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent shellexec
+Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; StatusMsg: "Instalando o runtime WebView2..."; Check: not WebView2Installed; Flags: waituntilterminated skipifdoesntexist
+Filename: "{app}\{#MyAppGuiExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent skipifdoesntexist
 
 [Registry]
-; Note: We use setx in [Run] section for immediate PATH update (works in Windows Sandbox)
-; Registry entries below are kept as backup for system-wide persistence
-; They will be applied on next login/restart if setx fails
+; PATH is written here and *only* here.
+;
+; The previous version also ran `setx PATH "%PATH%;{app};{app}\bin"`, which is
+; two separate bugs. %PATH% at that moment is the *merged* system + user PATH,
+; while setx writes the *user* one — so every system entry got copied into the
+; user variable and appeared twice. And setx silently truncates its value at
+; 1024 characters, so on any machine with a normal-length PATH the copy was cut
+; mid-entry, corrupting unrelated tools' paths. ChangesEnvironment=yes above
+; delivers the "takes effect immediately" part that setx was there for.
 Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}"; Tasks: addtopath; Check: NeedsAddPath('{app}')
 Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Control\Session Manager\Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{olddata};{app}\bin"; Tasks: addtopath; Check: NeedsAddPath('{app}\bin')
 
 [Code]
-// Check if a path is already in the system PATH
+const
+  EnvKey = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment';
+
+// NeedsAddPath reports whether an entry is missing from the system PATH.
+//
+// The delimiters matter: a bare Pos() of the install directory also matches
+// inside '{app}\bin', so a fresh install would decide {app} was already
+// present the moment {app}\bin had been added.
+//
+// A registry read that fails answers True — better to attempt the write, which
+// Inno does safely with {olddata}, than to silently skip the PATH task.
 function NeedsAddPath(Param: string): boolean;
 var
-  OrigPath: string;
+  Orig: string;
 begin
-  if not RegQueryStringValue(HKLM, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', 'Path', OrigPath) then
+  if not RegQueryStringValue(HKLM, EnvKey, 'Path', Orig) then
   begin
     Result := True;
-    exit;
+    Exit;
   end;
-  Result := Pos(';' + Param + ';', ';' + OrigPath + ';') = 0;
+  Result := Pos(';' + Uppercase(Param) + ';', ';' + Uppercase(Orig) + ';') = 0;
 end;
 
-// Remove a path from system PATH during uninstall
-procedure RemovePath(PathToRemove: string);
+// RemovePath drops one entry from the system PATH, matching it whole.
+//
+// Two rules this function exists to enforce:
+//
+//   - Match on ';entry;'. The old implementation searched for ';' + Param,
+//     which also matched the {app} prefix *inside* the {app}\bin entry, so
+//     uninstalling removed the prefix and left a dangling '\bin' behind.
+//
+//   - Never write a PATH we did not successfully read, and never write one we
+//     did not actually change. PATH is shared machine state; a failed read
+//     followed by a write is how an uninstaller destroys every other program's
+//     entries.
+procedure RemovePath(Param: string);
 var
-  OrigPath: string;
-  NewPath: string;
+  Orig, Padded, Target: string;
   P: Integer;
 begin
-  if RegQueryStringValue(HKLM, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', 'Path', OrigPath) then
+  if not RegQueryStringValue(HKLM, EnvKey, 'Path', Orig) then
+    Exit;
+  if Orig = '' then
+    Exit;
+
+  Padded := ';' + Orig + ';';
+  Target := ';' + Uppercase(Param) + ';';
+
+  P := Pos(Target, Uppercase(Padded));
+  while P > 0 do
   begin
-    NewPath := OrigPath;
-    // Try to remove with semicolon before
-    P := Pos(';' + PathToRemove, NewPath);
-    if P > 0 then
-    begin
-      Delete(NewPath, P, Length(PathToRemove) + 1);
-    end
-    else
-    begin
-      // Try to remove with semicolon after
-      P := Pos(PathToRemove + ';', NewPath);
-      if P > 0 then
-        Delete(NewPath, P, Length(PathToRemove) + 1);
-    end;
-    
-    if NewPath <> OrigPath then
-      RegWriteStringValue(HKLM, 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment', 'Path', NewPath);
+    // Length(Target) - 1 keeps one delimiter, so the entries on either side
+    // stay separated instead of being joined into one bogus path.
+    Delete(Padded, P, Length(Target) - 1);
+    P := Pos(Target, Uppercase(Padded));
   end;
+
+  // Strip the delimiters this procedure added.
+  Delete(Padded, 1, 1);
+  if (Length(Padded) > 0) and (Copy(Padded, Length(Padded), 1) = ';') then
+    Delete(Padded, Length(Padded), 1);
+
+  if Padded <> Orig then
+    RegWriteExpandStringValue(HKLM, EnvKey, 'Path', Padded);
+end;
+
+// --- WebView2 -------------------------------------------------------------
+//
+// The desktop app is a Wails/WebView2 shell. The Evergreen runtime ships with
+// Windows 11 and with current Windows 10, but not with an unpatched 1809, and
+// without it goanime-gui.exe starts and shows nothing at all — a blank window
+// with no error, which is the worst possible failure to debug from a bug
+// report. So detect it and install it from Microsoft's official bootstrapper.
+function WebView2Installed(): boolean;
+var
+  Version: string;
+begin
+  Result :=
+    (RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) and (Version <> '') and (Version <> '0.0.0.0')) or
+    (RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) and (Version <> '') and (Version <> '0.0.0.0')) or
+    (RegQueryStringValue(HKCU, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}', 'pv', Version) and (Version <> '') and (Version <> '0.0.0.0'));
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usPostUninstall then
   begin
-    // Remove paths added during installation
-    RemovePath(ExpandConstant('{app}'));
+    // Longest first: removing {app} before {app}\bin is only safe because
+    // RemovePath matches whole entries, but the order still reads better.
     RemovePath(ExpandConstant('{app}\bin'));
+    RemovePath(ExpandConstant('{app}'));
   end;
 end;

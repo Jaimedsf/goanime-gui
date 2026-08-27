@@ -26,3 +26,20 @@ updates:
       actions:
         patterns:
           - '*'
+
+  # The frontend has no runtime dependencies — these are the lint and format
+  # tools only. Grouped into one PR because a bump to eslint or prettier is
+  # never interesting on its own, and left on a later slot so it does not
+  # compete with the Go updates for review attention.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 5
+    groups:
+      frontend-tooling:
+        patterns:
+          - '*'
