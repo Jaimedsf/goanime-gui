@@ -437,6 +437,59 @@ func TestDescribeSuperFlixFailureKeepsUnknownCauses(t *testing.T) {
 	}
 }
 
+// withHeadless forces the display check for one test. Not parallel-safe, so
+// the tests using it do not call t.Parallel.
+func withHeadless(t *testing.T, headless bool) {
+	t.Helper()
+	prev := superflixHeadless
+	superflixHeadless = func() bool { return headless }
+	t.Cleanup(func() { superflixHeadless = prev })
+}
+
+// The headless branch describes the machine, not the error, so it used to
+// run first and swallow whatever actually went wrong -- on a headless box
+// every SuperFlix failure read "no screen was found" and the real cause was
+// unrecoverable. It only ever failed on Linux, because the display check is
+// hardcoded true on Windows and macOS.
+func TestDescribeSuperFlixFailureKeepsTheCauseWhenHeadless(t *testing.T) {
+	withHeadless(t, true)
+
+	got := describeSuperFlixFailure(errors.New("algo inesperado")).Error()
+	if !strings.Contains(got, "nenhuma tela foi encontrada") {
+		t.Errorf("a headless machine should still be explained: %s", got)
+	}
+	if !strings.Contains(got, "algo inesperado") {
+		t.Errorf("the cause must survive alongside the explanation: %s", got)
+	}
+}
+
+// A cause the function recognises must win over the headless explanation:
+// "the page carried no episode list" is more useful than "you have no
+// screen", and it is true whether or not a display exists.
+func TestDescribeSuperFlixFailurePrefersAKnownCauseOverHeadless(t *testing.T) {
+	withHeadless(t, true)
+
+	got := describeSuperFlixFailure(superflix.ErrSuperFlixNoEpisodeList).Error()
+	if !strings.Contains(got, "lista de") {
+		t.Errorf("the specific cause should be reported: %s", got)
+	}
+	if strings.Contains(got, "nenhuma tela") {
+		t.Errorf("a known cause must not be replaced by the headless message: %s", got)
+	}
+}
+
+// The timeout message is checked for jargon elsewhere; here the point is
+// that being headless does not hijack it either.
+func TestDescribeSuperFlixFailurePrefersTimeoutOverHeadless(t *testing.T) {
+	withHeadless(t, true)
+
+	got := describeSuperFlixFailure(
+		fmt.Errorf("failed to load serie page: %w", context.DeadlineExceeded)).Error()
+	if !strings.Contains(got, "demorou demais") {
+		t.Errorf("a timeout should still be reported as a timeout: %s", got)
+	}
+}
+
 // A movie is a single item and must never touch the season machinery — no
 // TVmaze call, no browser, no timeout.
 func TestSuperFlixMovieSkipsTheSeasonPath(t *testing.T) {

@@ -477,6 +477,15 @@ func fetchSuperFlixSeasons(anime *models.Anime, tmdbID string) (map[string][]sup
 // describeSuperFlixFailure turns a browser-path failure into something the
 // user can act on. The raw errors are jargon ("context deadline exceeded",
 // "failed to load serie page") and say nothing about what to do next.
+// superflixHeadless reports whether SuperFlix has no display to work with.
+//
+// Indirected through a var so tests can drive both branches. The underlying
+// check is hardcoded to "a display exists" on Windows and macOS, so the
+// headless path was unreachable on two of the three platforms and the test
+// covering it passed vacuously there -- which is exactly why the bug above
+// survived until a Linux runner ran it.
+var superflixHeadless = superflix.HeadlessEnvironment
+
 func describeSuperFlixFailure(err error) error {
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
@@ -485,15 +494,19 @@ func describeSuperFlixFailure(err error) error {
 				"de robô que não foi concluída — se uma janela de navegador abriu, deixe-a " +
 				"terminar e tente de novo. Se insistir, procure o título em outra fonte")
 
-	case superflix.HeadlessEnvironment():
-		return fmt.Errorf(
-			"o SuperFlix precisa abrir uma janela de navegador para provar que você não " +
-				"é um robô, mas nenhuma tela foi encontrada")
-
 	case errors.Is(err, superflix.ErrSuperFlixNoEpisodeList):
 		return fmt.Errorf(
 			"o SuperFlix abriu a página deste título, mas ela não trouxe a lista de " +
 				"episódios — tente procurá-lo em outra fonte")
+
+	// Last of the specific cases, and it wraps. Being headless explains why
+	// SuperFlix failed, but it is not itself the failure: this branch tests
+	// the machine, not err, so as an early case it replaced *every*
+	// unrecognised cause with this sentence and the real one was gone.
+	case superflixHeadless():
+		return fmt.Errorf(
+			"o SuperFlix precisa abrir uma janela de navegador para provar que você não "+
+				"é um robô, mas nenhuma tela foi encontrada: %w", err)
 	}
 
 	return fmt.Errorf("não foi possível carregar as temporadas do SuperFlix: %w", err)
