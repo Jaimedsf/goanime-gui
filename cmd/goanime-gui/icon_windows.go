@@ -67,35 +67,41 @@ func applyWindowIcon() {
 func setIcons(hwnd uintptr) {
 	instance, _, _ := procGetModuleHandleW.Call(0)
 
+	// LazyProc.Call always returns a non-nil error -- it is the thread's
+	// errno, which is set whether or not the call succeeded -- so there is
+	// nothing meaningful to check here, and the whole file is best-effort
+	// anyway: WM_SETICON has no failure worth reporting to the user.
 	if big := loadIcon(instance, systemMetric(smCXIcon), systemMetric(smCYIcon)); big != 0 {
-		procSendMessageW.Call(hwnd, wmSetIcon, iconBig, big)
+		_, _, _ = procSendMessageW.Call(hwnd, wmSetIcon, iconBig, big)
 	}
 	if small := loadIcon(instance, systemMetric(smCXSmIcon), systemMetric(smCYSmIcon)); small != 0 {
-		procSendMessageW.Call(hwnd, wmSetIcon, iconSmall, small)
+		_, _, _ = procSendMessageW.Call(hwnd, wmSetIcon, iconSmall, small)
 	}
 }
 
 // loadIcon pulls the app icon resource at a specific size. A zero size
 // falls back to the system default via LR_DEFAULTSIZE.
-func loadIcon(instance uintptr, cx, cy int32) uintptr {
+func loadIcon(instance, cx, cy uintptr) uintptr {
 	flags := uintptr(0)
 	if cx == 0 || cy == 0 {
 		flags = lrDefaultSize
 	}
 	h, _, _ := procLoadImageW.Call(
 		instance,
-		uintptr(appIconResI), // MAKEINTRESOURCE(3)
+		appIconResI, // the resource id, as MAKEINTRESOURCE would encode it
 		imageIcon,
-		uintptr(cx),
-		uintptr(cy),
+		cx,
+		cy,
 		flags,
 	)
 	return h
 }
 
-func systemMetric(index int32) int32 {
-	v, _, _ := procGetSystemMetrics.Call(uintptr(index))
-	return int32(v)
+// systemMetric returns a GetSystemMetrics value, or 0 when the metric is
+// unavailable -- which loadIcon reads as "use the system default size".
+func systemMetric(index uintptr) uintptr {
+	v, _, _ := procGetSystemMetrics.Call(index)
+	return v
 }
 
 // findOwnWindow returns the handle of this process's first visible
@@ -106,7 +112,7 @@ func findOwnWindow() uintptr {
 	var found uintptr
 	cb := windows.NewCallback(func(hwnd uintptr, _ uintptr) uintptr {
 		var wndPID uint32
-		procGetWindowThreadPID.Call(hwnd, uintptr(unsafe.Pointer(&wndPID)))
+		_, _, _ = procGetWindowThreadPID.Call(hwnd, uintptr(unsafe.Pointer(&wndPID)))
 		if uintptr(wndPID) != pid {
 			return 1 // keep enumerating
 		}
@@ -117,6 +123,6 @@ func findOwnWindow() uintptr {
 		return 0 // stop
 	})
 
-	procEnumWindows.Call(cb, 0)
+	_, _, _ = procEnumWindows.Call(cb, 0)
 	return found
 }

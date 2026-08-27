@@ -55,17 +55,23 @@ func TestCurrentSeasonAgreesWithSeasonFor(t *testing.T) {
 func TestValidSeasonNormalises(t *testing.T) {
 	t.Parallel()
 
-	cases := map[string]string{
-		"WINTER":   SeasonWinter,
-		"spring":   SeasonSpring,
-		" Summer ": SeasonSummer,
-		"FALL":     SeasonFall,
-		"AUTUMN":   SeasonFall, // AniList says FALL; accept the synonym
+	// A slice rather than a map: the surrounding whitespace in " Summer " is
+	// the case being tested, and as a map key it reads like a typo -- which
+	// is exactly what gocritic's mapKey check flags it as.
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"WINTER", SeasonWinter},
+		{"spring", SeasonSpring},
+		{" Summer ", SeasonSummer},
+		{"FALL", SeasonFall},
+		{"AUTUMN", SeasonFall}, // AniList says FALL; accept the synonym
 	}
 
-	for in, want := range cases {
-		if got := validSeason(in); got != want {
-			t.Errorf("validSeason(%q) = %q, want %q", in, got, want)
+	for _, c := range cases {
+		if got := validSeason(c.in); got != c.want {
+			t.Errorf("validSeason(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 

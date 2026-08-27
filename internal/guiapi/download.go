@@ -386,7 +386,7 @@ func newDownloadRequest(ctx context.Context, streamURL string, headers map[strin
 		return nil, fmt.Errorf("download recusado por segurança a partir de %q: %w", streamURL, err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, streamURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, streamURL, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("link do vídeo inválido: %w", err)
 	}

@@ -44,7 +44,7 @@ func (f *fakeScraper) GetAnimeEpisodes(animeURL string) ([]models.Episode, error
 	return f.episodes, f.epErr
 }
 
-func (f *fakeScraper) GetStreamURL(episodeURL string, options ...any) (string, map[string]string, error) {
+func (f *fakeScraper) GetStreamURL(episodeURL string, options ...any) (streamURL string, metadata map[string]string, err error) {
 	f.gotStreamURL = episodeURL
 	f.gotStreamOpts = options
 	return f.streamURL, f.streamMeta, f.streamErr

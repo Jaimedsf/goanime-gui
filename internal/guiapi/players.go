@@ -60,11 +60,21 @@ func resolvePlayerPath(name string) string {
 }
 
 // firstExisting returns the first path that exists on disk, or fallback.
+//
+// gosec flags the Stat below as a path traversal (G703) because some of the
+// candidates are built from os.Getenv("ProgramFiles") and friends. The taint
+// is real but the finding is not: the candidate list is assembled here from
+// hardcoded executable names joined onto environment variables the operating
+// system sets, never from anything a user or a scraper supplies. It is also
+// a read of file metadata and nothing else -- nothing is opened, written or
+// executed on the strength of it. The caller only learns whether a media
+// player is installed.
 func firstExisting(candidates []string, fallback string) string {
 	for _, p := range candidates {
 		if p == "" {
 			continue
 		}
+		// #nosec G703 -- see the note above: OS-provided paths, metadata read only.
 		if _, err := os.Stat(p); err == nil {
 			return p
 		}
