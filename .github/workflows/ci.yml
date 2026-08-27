@@ -77,7 +77,10 @@ jobs:
       - name: Check formatting
         shell: bash
         run: |
-          unformatted="$(gofmt -l .)"
+          # Tracked files only. `gofmt -l .` walks node_modules, which carries
+          # a vendored Go file of its own, so on any checkout that has run
+          # npm install the command reports a file nobody here maintains.
+          unformatted="$(git ls-files '*.go' | xargs gofmt -l)"
           if [[ -n "$unformatted" ]]; then
             echo "The following files are not gofmt formatted:"
             echo "$unformatted"
