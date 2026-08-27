@@ -1,6 +1,6 @@
-import { app } from "./bridge.js";
+import { app, errText } from "./bridge.js";
 import { state } from "./state.js";
-import { clear, els, plural, relativeTime } from "./dom.js";
+import { clear, els, plural, relativeTime, toast } from "./dom.js";
 import { buildCard, enrichCards, loadFavoriteKeys, newPending } from "./cards.js";
 
 export async function loadFavorites() {
@@ -53,10 +53,31 @@ export async function loadHistory() {
           ? `S${h.seasonID}E${h.episodeNumber} · ${relativeTime(h.watchedAt)}`
           : `Ep. ${h.episodeNumber} · ${relativeTime(h.watchedAt)}`,
         progress: "Continuar",
+        removeTitle: "Remover do histórico",
+        onRemove: () => forgetTitle(h),
       })
     );
   }
   enrichCards(pending);
+}
+
+// forgetTitle drops one title from the history. A card stands for a title
+// rather than a single episode — RecentlyWatched collapses them — so this
+// removes every episode of it, which is what the row was showing.
+//
+// It is not confirmed, matching the Clear-history button next to it: the
+// undo is watching the episode again, and a dialog for every deletion would
+// be in the way of the case this exists for.
+async function forgetTitle(entry) {
+  try {
+    await app().ForgetTitle(entry.key);
+    toast(`“${entry.result.name}” saiu do histórico`);
+  } catch (err) {
+    console.error(err);
+    toast(`Não foi possível remover do histórico: ${errText(err)}`);
+    return;
+  }
+  await loadHistory();
 }
 
 function setTabCount(el, n) {

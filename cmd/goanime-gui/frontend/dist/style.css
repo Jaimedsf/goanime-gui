@@ -921,6 +921,28 @@ li:hover .card-star,
   opacity: 1;
 }
 
+/* The history's per-title delete. It mirrors the star on the other corner
+   and reveals on hover the same way, so a card carrying both reads as one
+   pair of controls rather than two competing ones. */
+.card-remove {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.card-remove:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+li:hover .card-remove,
+.card-remove:focus-visible {
+  opacity: 1;
+}
+
 .header-star {
   background: none;
   color: var(--fg-muted);

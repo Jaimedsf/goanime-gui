@@ -190,6 +190,24 @@ export function buildCard(r, pending, opts = {}) {
   });
   li.appendChild(star);
 
+  // An optional remove button, used by the history so a single title can be
+  // dropped without clearing everything. It sits opposite the star for the
+  // same reason the star is out here: neither can nest inside the card
+  // button. Cards that pass no handler get no button at all.
+  if (opts.onRemove) {
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "star-btn card-remove";
+    remove.textContent = "✕";
+    remove.title = opts.removeTitle || "Remover";
+    remove.setAttribute("aria-label", remove.title);
+    remove.addEventListener("click", (e) => {
+      e.stopPropagation();
+      opts.onRemove(r);
+    });
+    li.appendChild(remove);
+  }
+
   return li;
 }
 
