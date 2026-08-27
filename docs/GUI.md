@@ -18,6 +18,9 @@ cmd/
     app.go         # App struct — bound to JS as window.go.main.App.*
     frontend/
       dist/        # static HTML/CSS/JS served by the webview
+        index.html
+        style.css
+        js/        # native ES modules — no bundler, no Node toolchain
 internal/
   guiapi/
     guiapi.go      # search, episodes, seasons, stream resolution
@@ -30,6 +33,43 @@ internal/
 
 The frontend is deliberately static (no vite, no Node toolchain) so
 `go build ./cmd/goanime-gui` works out of the box.
+
+### Why ES modules and not a framework
+
+The frontend is **native ES modules**, loaded with a single
+`<script type="module" src="js/main.js">`. WebView2 is Chromium, so they run
+untranspiled, and Wails serves `.js` as `text/javascript`. That keeps `go build`
+the only command needed — a bundler would cost that, and the payoff would be
+small: the bugs this GUI has actually had were about lifecycle and state, which
+no rendering framework prevents.
+
+The import graph is a **DAG in six layers**, and that is a property worth
+keeping:
+
+```
+bridge  dom  state  labels  hooks     ← nothing imports upward
+        views  sources  downloads
+             cards  playback
+        episodes  library  search
+         catalog  gate  schedule
+                 main                 ← the only module that knows them all
+```
+
+Two edges would have closed cycles, and both are inverted rather than allowed:
+
+- **Tab loaders.** `views.js` would import `schedule.js` for its loader, while
+  `schedule.js` imports `showResults` back. Instead `views.js` exposes
+  `registerTab(id, pane, load)` and `main.js` registers the four tabs.
+- **`hooks.js`.** A card opens a title (episodes) and toggling its star
+  refreshes the library and the calendar — all of which are built from cards.
+  `cards.js` calls `hooks.openTitle` / `hooks.libraryChanged`; `main.js` fills
+  the two slots at boot. Named slots rather than an event bus, because these are
+  the only two edges that need it and an unfilled slot fails at the call site
+  instead of silently going nowhere.
+
+Modules have their own scope, so `state` and `els` are no longer global. The
+one door left open is `window.__debug = { state, els }`, set at the end of
+`main.js`, for devtools and for the test harness that drives the UI over CDP.
 
 ## Running the GUI
 
