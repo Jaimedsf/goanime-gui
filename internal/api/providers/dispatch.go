@@ -125,7 +125,11 @@ func SearchAll(ctx context.Context, query string, kinds ...source.SourceKind) ([
 	go func() { wg.Wait(); close(resultChan) }()
 
 	var (
-		all        []*models.Anime
+		all []*models.Anime
+		// answered counts sources that completed without erroring, whether or
+		// not they matched anything. It is what separates "nothing carries
+		// this title" from "we never got a usable answer" — see finishSearch.
+		answered   int
 		errs       []error
 		graceTimer <-chan time.Time
 	)
@@ -133,7 +137,7 @@ func SearchAll(ctx context.Context, query string, kinds ...source.SourceKind) ([
 		select {
 		case res, ok := <-resultChan:
 			if !ok {
-				return finishSearch(query, all, errs)
+				return finishSearch(query, answered, all, errs)
 			}
 			if res.err != nil {
 				// Feed the breaker so a repeatedly-failing source opens.
@@ -146,6 +150,7 @@ func SearchAll(ctx context.Context, query string, kinds ...source.SourceKind) ([
 				continue
 			}
 			searchBreaker.RecordSuccess(string(res.kind))
+			answered++
 			if len(res.results) > 0 {
 				all = append(all, res.results...)
 				util.Debug("search results received", "source", res.kind, "count", len(res.results))
@@ -155,10 +160,10 @@ func SearchAll(ctx context.Context, query string, kinds ...source.SourceKind) ([
 			}
 		case <-graceTimer:
 			util.Debug("straggler grace elapsed; returning collected search results")
-			return finishSearch(query, all, errs)
+			return finishSearch(query, answered, all, errs)
 		case <-ctx.Done():
 			util.Debug("search timeout reached; returning collected results")
-			return finishSearch(query, all, errs)
+			return finishSearch(query, answered, all, errs)
 		}
 	}
 }
@@ -197,14 +202,47 @@ func searchOneWithTimeout(parent context.Context, a activeSearcher, query string
 	}
 }
 
-func finishSearch(query string, all []*models.Anime, errs []error) ([]*models.Anime, error) {
-	if len(all) == 0 {
-		if len(errs) > 0 {
-			return nil, fmt.Errorf("no results for %q (all sources failed): %w", query, errors.Join(errs...))
-		}
-		return nil, fmt.Errorf("no results found for: %s", query)
+// ErrNoResults reports the ordinary outcome of a search that no source
+// matched — as opposed to one where the sources were tried and failed.
+//
+// The two arrive as errors alike because a CLI search has nothing to show
+// either way, but a caller with a UI needs to tell them apart: "nothing
+// carries this title" is an empty state, not a failure, and rendering it as
+// one makes a normal answer look broken. Callers test with errors.Is.
+var ErrNoResults = errors.New("no results found")
+
+// finishSearch turns the collected fan-out into one result.
+//
+// answered is how many sources completed without erroring. It matters
+// because a source failing alongside sources that answered cleanly is not
+// the same event as every source failing: with one clean "nothing here" in
+// hand, the honest report is that the title was not found. Judging by
+// len(errs) alone meant one source hiccupping — AnimeFire answering 404 for
+// a moment, say — turned an ordinary empty search for an obscure title into
+// a red failure, hiding the answer the other sources had already given.
+func finishSearch(query string, answered int, all []*models.Anime, errs []error) ([]*models.Anime, error) {
+	if len(all) > 0 {
+		return all, nil
 	}
-	return all, nil
+
+	if answered > 0 {
+		// Partial failures are logged rather than returned: they change
+		// nothing about the answer, and surfacing them would put an outage
+		// message in front of a user whose search simply matched nothing.
+		if len(errs) > 0 {
+			util.Debug("search matched nothing; some sources also failed",
+				"query", query, "answered", answered, "failed", len(errs),
+				"errors", errors.Join(errs...))
+		}
+		return nil, fmt.Errorf("%w for: %s", ErrNoResults, query)
+	}
+
+	if len(errs) > 0 {
+		return nil, fmt.Errorf("no results for %q (all sources failed): %w", query, errors.Join(errs...))
+	}
+	// Nothing reported at all before the deadline, so nothing is known about
+	// the title either way — not an empty result, and not ErrNoResults.
+	return nil, fmt.Errorf("no results for %q: no source answered in time", query)
 }
 
 // FetchEpisodes lists an anime's episodes through the Model B registry — the

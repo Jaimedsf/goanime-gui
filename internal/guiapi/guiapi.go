@@ -209,7 +209,18 @@ func beginSearch() (context.Context, func()) {
 func searchWithContext(ctx context.Context, query, sourceID string) ([]SearchResult, error) {
 	animes, err := providers.SearchAll(ctx, query, kindsFor(sourceID)...)
 	if err != nil {
-		return nil, fmt.Errorf("a busca falhou: %w", err)
+		// Nothing matching is not a failure. It is the everyday answer for a
+		// title the scrapers do not carry — an AniList-only entry, a hentai
+		// one, anything obscure — and the frontend has an empty state that
+		// explains exactly that. Returning an error here buried it behind a
+		// red "a busca falhou" instead.
+		if errors.Is(err, providers.ErrNoResults) {
+			return []SearchResult{}, nil
+		}
+		// Unwrapped: both callers in the frontend already prefix the message
+		// with "A busca falhou:", and wrapping it again here is what produced
+		// "A busca falhou: a busca falhou: …".
+		return nil, err
 	}
 
 	results := make([]SearchResult, 0, len(animes))

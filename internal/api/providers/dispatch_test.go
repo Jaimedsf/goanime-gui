@@ -218,3 +218,63 @@ func TestSearchAll_NoSearchableSource(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no searchable source")
 }
+
+// A search nothing matched and a search whose sources all failed both come
+// back as errors, but only the first is ErrNoResults. The GUI branches on
+// exactly that: it turns the first into an empty state and the second into a
+// visible failure, so collapsing them would either hide a real outage or
+// make "no source carries this title" look like a crash.
+func TestFinishSearchDistinguishesNoResultsFromFailure(t *testing.T) {
+	t.Parallel()
+
+	// Every source answered, none matched.
+	_, err := finishSearch("hebi to kumo", 3, nil, nil)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrNoResults),
+		"an empty search must report ErrNoResults, got %v", err)
+	// The wording is what the CLI prints, so it is pinned along with the
+	// sentinel it now wraps.
+	assert.Equal(t, "no results found for: hebi to kumo", err.Error())
+
+	// Nobody answered and everything failed: nothing is known about the
+	// title, so this is a real failure and must not be ErrNoResults.
+	_, err = finishSearch("naruto", 0, nil, []error{errors.New("animefire: 503")})
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, ErrNoResults),
+		"sources failing must not be reported as an empty result: %v", err)
+	assert.Contains(t, err.Error(), "animefire: 503")
+
+	// Results present: no error at all, whatever the partial failures were.
+	got, err := finishSearch("naruto", 2, []*models.Anime{{Name: "Naruto"}},
+		[]error{errors.New("goyabu: 500")})
+	require.NoError(t, err)
+	assert.Len(t, got, 1)
+}
+
+// The case that made an obscure title look broken: most sources answered and
+// had nothing, one hiccupped. The clean answers are the evidence — the search
+// found nothing, and one source's 404 does not turn that into an outage.
+func TestFinishSearchTreatsAPartialFailureAsNoResults(t *testing.T) {
+	t.Parallel()
+
+	_, err := finishSearch("hebi to kumo", 2, nil,
+		[]error{errors.New("animefire: AnimeFire search http: returned HTTP 404")})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrNoResults),
+		"one source failing alongside sources that answered must stay ErrNoResults, got %v", err)
+	// The failing source's message must not ride along into the UI, which
+	// renders ErrNoResults as a plain empty state.
+	assert.NotContains(t, err.Error(), "404")
+}
+
+// Nothing reported before the deadline is neither an answer nor a source
+// failure: the search is unresolved, so it must not claim the title was not
+// found.
+func TestFinishSearchDoesNotClaimEmptyWhenNobodyAnswered(t *testing.T) {
+	t.Parallel()
+
+	_, err := finishSearch("naruto", 0, nil, nil)
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, ErrNoResults),
+		"a search nobody answered must not report ErrNoResults: %v", err)
+}
