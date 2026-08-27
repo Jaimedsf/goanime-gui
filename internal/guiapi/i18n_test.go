@@ -115,23 +115,35 @@ var jsUserStringRe = regexp.MustCompile(
 	`(?:setStatus\(|toast\(|\.textContent\s*=\s*|\.title\s*=\s*|\.placeholder\s*=\s*)` +
 		"(?:`([^`]*)`|\"([^\"]*)\")")
 
+// Every module is scanned, not just main.js: the frontend was one script
+// once, and pinning this to a single file is what let the strings in the
+// modules it was split into go unchecked.
 func TestJSUserStringsArePortuguese(t *testing.T) {
-	dir := frontendDir(t)
-
-	raw, err := os.ReadFile(filepath.Join(dir, "main.js"))
+	files, err := filepath.Glob(filepath.Join(frontendDir(t), "js", "*.js"))
 	if err != nil {
-		t.Fatalf("read main.js: %v", err)
+		t.Fatalf("list the frontend modules: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no frontend modules found: the dist/js layout must have moved")
 	}
 
-	for _, m := range jsUserStringRe.FindAllStringSubmatch(string(raw), -1) {
-		lit := m[1]
-		if lit == "" {
-			lit = m[2]
+	for _, f := range files {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", filepath.Base(f), err)
 		}
-		clean := stripAllowed(stripInterpolations(lit))
-		for _, marker := range englishMarkers {
-			if containsWord(clean, marker) {
-				t.Errorf("main.js shows the English word %q in: %q", marker, lit)
+
+		for _, m := range jsUserStringRe.FindAllStringSubmatch(string(raw), -1) {
+			lit := m[1]
+			if lit == "" {
+				lit = m[2]
+			}
+			clean := stripAllowed(stripInterpolations(lit))
+			for _, marker := range englishMarkers {
+				if containsWord(clean, marker) {
+					t.Errorf("%s shows the English word %q in: %q",
+						filepath.Base(f), marker, lit)
+				}
 			}
 		}
 	}
