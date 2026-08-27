@@ -5,6 +5,7 @@
   "description": "Lint and format tooling for the GoAnime desktop frontend. Not a build step: cmd/goanime-gui/frontend/dist is hand-written ES modules that ship as-is, embedded into the Go binary.",
   "type": "module",
   "scripts": {
+    "postinstall": "node scripts/mark-node-modules-for-go.mjs",
     "lint": "eslint cmd/goanime-gui/frontend/dist/js scripts",
     "lint:fix": "eslint --fix cmd/goanime-gui/frontend/dist/js scripts",
     "format": "prettier --write cmd/goanime-gui/frontend/dist",

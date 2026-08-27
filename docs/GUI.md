@@ -716,6 +716,17 @@ runs as part of a build. `npm run check` is the whole gate:
 | `npm run format:check` | Prettier, `endOfLine: lf`. |
 | `npm run check:frontend` | `index.html` ids → `dom.js` → every `els.X` use, plus imports that name a symbol the target no longer exports. |
 
+`npm install` also runs `scripts/mark-node-modules-for-go.mjs`, which writes
+an empty `go.mod` into `node_modules`. That is not decoration either. The
+tooling lives at the repository root, so npm installs inside the Go module,
+and one dependency ships a vendored `.go` file — which means `go list ./...`
+picks it up and its 164 uncovered statements land in the denominator of
+`go test -cover ./...`. The local coverage number then reads about half a
+point below the one CI computes, because CI never runs npm and Go in the same
+job. Go stops descending at a module boundary, so the marker makes the tree
+invisible; it is recreated on every install because `npm ci` deletes
+`node_modules` wholesale and a committed file would not survive.
+
 That third one exists because the frontend reaches the DOM through one
 indirection — `dom.js` resolves every id once into `els` — which is good for
 reading and silent under refactoring. Delete a `<section>` and `els.x` becomes
