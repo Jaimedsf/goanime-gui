@@ -1,7 +1,12 @@
 import { app, errText } from "./bridge.js";
 import { state } from "./state.js";
 import { clear, els, plural, relativeTime, toast } from "./dom.js";
-import { buildCard, enrichCards, loadFavoriteKeys, newPending } from "./cards.js";
+import {
+  buildCard,
+  enrichCards,
+  loadFavoriteKeys,
+  newPending,
+} from "./cards.js";
 
 export async function loadFavorites() {
   await loadFavoriteKeys();

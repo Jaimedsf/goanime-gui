@@ -1,7 +1,15 @@
 import { app, errText, withTimeout } from "./bridge.js";
 import { FORMAT_LABELS, STATUS_LABELS, genreLabel } from "./labels.js";
 import { state } from "./state.js";
-import { clear, els, fillOptions, plural, renderError, setStatus, skeletons } from "./dom.js";
+import {
+  clear,
+  els,
+  fillOptions,
+  plural,
+  renderError,
+  setStatus,
+  skeletons,
+} from "./dom.js";
 import { setArtwork } from "./cards.js";
 import { searchByTitle } from "./search.js";
 
@@ -53,7 +61,6 @@ export async function initCatalog() {
   syncCatalogControls();
   return loadCatalog(1);
 }
-
 
 // syncCatalogControls hides the season picker outside season mode, where it
 // has no effect, and forces a concrete year in season mode, where "any

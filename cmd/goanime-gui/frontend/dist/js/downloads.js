@@ -9,7 +9,9 @@ export async function downloadEpisode(ep) {
     openDrawer();
   } catch (err) {
     console.error(err);
-    setStatus(`Não foi possível iniciar o download: ${errText(err)}`, { error: true });
+    setStatus(`Não foi possível iniciar o download: ${errText(err)}`, {
+      error: true,
+    });
   }
 }
 
@@ -137,7 +139,9 @@ export async function loadDownloads() {
 // to nothing if the runtime is absent (e.g. the page opened outside Wails).
 export function wireDownloadEvents() {
   if (!window.runtime || !window.runtime.EventsOn) {
-    console.warn("Wails runtime events unavailable; downloads won't live-update");
+    console.warn(
+      "Wails runtime events unavailable; downloads won't live-update"
+    );
     return;
   }
   window.runtime.EventsOn("download:progress", (p) => {

@@ -52,5 +52,7 @@ export async function runBounded(items, limit, fn) {
     }
   }
 
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, worker)
+  );
 }

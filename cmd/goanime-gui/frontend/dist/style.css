@@ -40,7 +40,11 @@ body {
   margin: 0;
   padding: 0;
   height: 100%;
-  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-family:
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    sans-serif;
   background: var(--bg);
   color: var(--fg);
 }
@@ -322,7 +326,9 @@ h2 {
   border-radius: 12px;
   overflow: hidden;
   cursor: pointer;
-  transition: transform 0.15s, border-color 0.15s;
+  transition:
+    transform 0.15s,
+    border-color 0.15s;
   display: flex;
   flex-direction: column;
   text-align: left;
@@ -407,7 +413,9 @@ h2 {
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
-  transition: transform 0.15s, border-color 0.15s;
+  transition:
+    transform 0.15s,
+    border-color 0.15s;
   display: flex;
   flex-direction: column;
   position: relative;
@@ -617,7 +625,9 @@ h2 {
   justify-content: space-between;
   align-items: center;
   gap: 10px;
-  transition: background 0.15s, border-color 0.15s;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
 }
 
 .player-choices button:hover {
@@ -1324,7 +1334,6 @@ li:hover .card-remove,
   color: var(--fg-muted);
   cursor: pointer;
 }
-
 
 /* Skeleton columns. The shared .sk-line sizing is scoped to .skeleton, so
    the calendar's placeholders carry their own. */

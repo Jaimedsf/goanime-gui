@@ -1,7 +1,17 @@
 import { app, errText } from "./bridge.js";
 import { FORMAT_LABELS, STATUS_LABELS } from "./labels.js";
 import { STORAGE, state, writeStorage } from "./state.js";
-import { $, clear, els, episodeKey, formatAired, plural, renderError, setStatus, skeletons } from "./dom.js";
+import {
+  $,
+  clear,
+  els,
+  episodeKey,
+  formatAired,
+  plural,
+  renderError,
+  setStatus,
+  skeletons,
+} from "./dom.js";
 import { showEpisodes } from "./views.js";
 import { sourceInfo } from "./sources.js";
 import { isFavoriteResult, paintStar } from "./cards.js";
@@ -145,8 +155,10 @@ export async function loadEpisodes(result, season) {
   } catch (err) {
     console.error(err);
     state.episodes = [];
-    renderError(els.episodes, `Não foi possível carregar os episódios: ${errText(err)}`, () =>
-      loadEpisodes(result, season)
+    renderError(
+      els.episodes,
+      `Não foi possível carregar os episódios: ${errText(err)}`,
+      () => loadEpisodes(result, season)
     );
     setStatus("Falha ao carregar os episódios.", { error: true });
   }
@@ -253,7 +265,8 @@ function renderEpisodes(eps) {
     copyBtn.type = "button";
     copyBtn.className = "icon-btn";
     copyBtn.textContent = "Copiar link";
-    copyBtn.title = "Obter o link do vídeo e copiar para a área de transferência";
+    copyBtn.title =
+      "Obter o link do vídeo e copiar para a área de transferência";
     copyBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       copyStreamURL(li, ep);

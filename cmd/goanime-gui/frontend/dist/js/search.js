@@ -1,6 +1,13 @@
 import { app, errText } from "./bridge.js";
 import { STORAGE, readStorage, state, writeStorage } from "./state.js";
-import { clear, els, plural, renderError, setStatus, skeletons } from "./dom.js";
+import {
+  clear,
+  els,
+  plural,
+  renderError,
+  setStatus,
+  skeletons,
+} from "./dom.js";
 import { showResults } from "./views.js";
 import { buildCard, enrichCards, newPending } from "./cards.js";
 

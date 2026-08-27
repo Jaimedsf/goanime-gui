@@ -8,14 +8,41 @@ import { clear, els, setStatus, toast } from "./dom.js";
 import { goBack, registerTab, showTab } from "./views.js";
 import { loadQualities, loadSources } from "./sources.js";
 import { toggleFavorite } from "./cards.js";
-import { closePlayerModal, openPlayerModal, playerLabel, refreshPlayerChip, setPlayer } from "./playback.js";
+import {
+  closePlayerModal,
+  openPlayerModal,
+  playerLabel,
+  refreshPlayerChip,
+  setPlayer,
+} from "./playback.js";
 import { loadDownloads, openDrawer, wireDownloadEvents } from "./downloads.js";
-import { applyEpisodeFilter, closeEpisodeModal, loadEpisodes, openResult, paintGate } from "./episodes.js";
+import {
+  applyEpisodeFilter,
+  closeEpisodeModal,
+  loadEpisodes,
+  openResult,
+  paintGate,
+} from "./episodes.js";
 import { openGateSettings, saveGateSettings } from "./gate.js";
-import { loadFavorites, loadHistory, primeTabCounts, refreshLibraryViews } from "./library.js";
+import {
+  loadFavorites,
+  loadHistory,
+  primeTabCounts,
+  refreshLibraryViews,
+} from "./library.js";
 import { loadSchedule, renderSchedule } from "./schedule.js";
-import { applyCatalogView, initCatalog, loadCatalog, syncCatalogControls } from "./catalog.js";
-import { applyResultsView, loadQueryHistory, runSearch, setSearching } from "./search.js";
+import {
+  applyCatalogView,
+  initCatalog,
+  loadCatalog,
+  syncCatalogControls,
+} from "./catalog.js";
+import {
+  applyResultsView,
+  loadQueryHistory,
+  runSearch,
+  setSearching,
+} from "./search.js";
 import { hooks } from "./hooks.js";
 
 // --- wiring the modules together -----------------------------------------
@@ -65,7 +92,8 @@ els.tabs.addEventListener("keydown", (e) => {
   const i = btns.indexOf(document.activeElement);
   if (i < 0) return;
   e.preventDefault();
-  const next = btns[(i + (e.key === "ArrowRight" ? 1 : -1) + btns.length) % btns.length];
+  const next =
+    btns[(i + (e.key === "ArrowRight" ? 1 : -1) + btns.length) % btns.length];
   next.focus();
   showTab(next.dataset.tab);
 });

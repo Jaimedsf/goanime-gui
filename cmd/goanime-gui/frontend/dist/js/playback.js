@@ -142,7 +142,9 @@ export async function copyStreamURL(li, ep) {
     setStatus("");
   } catch (err) {
     console.error(err);
-    setStatus(`Não foi possível obter o link: ${errText(err)}`, { error: true });
+    setStatus(`Não foi possível obter o link: ${errText(err)}`, {
+      error: true,
+    });
   } finally {
     li.classList.remove("busy");
   }
