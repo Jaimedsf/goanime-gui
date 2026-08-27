@@ -54,6 +54,7 @@ export async function initCatalog() {
   return loadCatalog(1);
 }
 
+
 // syncCatalogControls hides the season picker outside season mode, where it
 // has no effect, and forces a concrete year in season mode, where "any
 // year" is not a valid combination.
@@ -84,16 +85,20 @@ function currentCatalogQuery(page) {
   };
 }
 
+// loadCatalog fetches one page and paints it. It resolves to false when the
+// fetch failed, which is what tells views.js to let the tab be retried.
 export async function loadCatalog(page) {
-  const query = currentCatalogQuery(page);
-
   skeletons(els.catalog, 12);
   els.catalogCount.textContent = "";
   els.catalogPrev.disabled = true;
   els.catalogNext.disabled = true;
 
   try {
-    const result = await withTimeout(app().Browse(query), 60000, "O catálogo");
+    const result = await withTimeout(
+      app().Browse(currentCatalogQuery(page)),
+      60000,
+      "O catálogo"
+    );
 
     state.catalog = {
       items: result.items || [],
@@ -126,7 +131,8 @@ export async function loadCatalog(page) {
 // it narrows the current page only — the label says as much.
 export function applyCatalogView() {
   const term = els.catalogFilter.value.trim().toLowerCase();
-  let view = state.catalog.items;
+  const all = state.catalog.items;
+  let view = all;
 
   if (term) {
     view = view.filter((it) =>
@@ -137,8 +143,8 @@ export function applyCatalogView() {
   }
 
   els.catalogCount.textContent = term
-    ? `${view.length} de ${state.catalog.items.length} nesta página`
-    : plural(state.catalog.items.length, "título");
+    ? `${view.length} de ${all.length} nesta página`
+    : plural(all.length, "título");
 
   if (!view.length) {
     renderError(

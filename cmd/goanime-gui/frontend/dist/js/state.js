@@ -27,7 +27,7 @@ export const state = {
   view: "tab",
   returnTo: "tab",
   // Tabs load their contents the first time they are opened. AniList is
-  // rate-limited, and loading all five at boot is what used to earn a 429.
+  // rate-limited, and loading them all at boot is what used to earn a 429.
   tabsLoaded: new Set(),
   schedule: null, // last WeekSchedule, or null before the first load
   // Bumped per schedule load so a slow first fetch cannot overwrite the

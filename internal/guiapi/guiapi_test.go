@@ -477,3 +477,90 @@ func TestSuperFlixWithoutTMDBIDFails(t *testing.T) {
 		t.Fatal("a SuperFlix title with no TMDB id should fail fast")
 	}
 }
+
+// The adult filter is fail-open by design: a title AniList does not
+// recognise must be shown, not hidden. These exercise dropAdult against a pre-seeded
+// mediaCache so no network is involved — the cache is the same one the
+// artwork lookups fill, which is why the filter costs no extra request.
+func seedAdultCache(t *testing.T, title string, adult bool) {
+	t.Helper()
+	key := strings.ToLower(normalizeTitle(title))
+	mediaCache.Store(key, &aniListMedia{adult: adult})
+	t.Cleanup(func() { mediaCache.Delete(key) })
+}
+
+func TestDropAdultRemovesFlaggedTitles(t *testing.T) {
+	seedAdultCache(t, "Filtered Adult Title", true)
+	seedAdultCache(t, "Filtered Safe Title", false)
+
+	in := []SearchResult{{Name: "Filtered Adult Title"}, {Name: "Filtered Safe Title"}}
+	got := dropAdult(append([]SearchResult(nil), in...))
+	if len(got) != 1 {
+		t.Fatalf("kept %d results, want 1", len(got))
+	}
+	if got[0].Name != "Filtered Safe Title" {
+		t.Errorf("kept %q, want the non-adult title", got[0].Name)
+	}
+}
+
+// Nothing to classify must not cost a pass.
+func TestDropAdultOnAnEmptyListIsANoOp(t *testing.T) {
+	if got := dropAdult(nil); got != nil {
+		t.Errorf("dropAdult(nil) = %v, want nil", got)
+	}
+}
+
+// The important half. A scraper title AniList cannot resolve — which the
+// PT-BR sources produce constantly — must survive the filter. Hiding on an
+// unknown would silently drop ordinary results the user searched for.
+func TestDropAdultShowsTitlesItCannotClassify(t *testing.T) {
+	seedAdultCache(t, "Unresolvable Scraper Title", false)
+	// Stored as nil, the shape lookupAniList caches for "AniList had nothing".
+	key := strings.ToLower(normalizeTitle("Nil Cached Title"))
+	mediaCache.Store(key, (*aniListMedia)(nil))
+	t.Cleanup(func() { mediaCache.Delete(key) })
+
+	in := []SearchResult{{Name: "Unresolvable Scraper Title"}, {Name: "Nil Cached Title"}}
+	got := dropAdult(append([]SearchResult(nil), in...))
+	if len(got) != 2 {
+		t.Fatalf("kept %d of %d; an unclassifiable title must be shown, not hidden", len(got), len(in))
+	}
+}
+
+// Out of budget, classification stops and shows what it did not get to,
+// rather than blocking or hiding it.
+func TestDropAdultOutOfBudgetKeepsResults(t *testing.T) {
+	seedAdultCache(t, "Out Of Budget Adult Title", true)
+
+	prev := adultFilterTimeout
+	// A deadline already in the past, so the budget is deterministically
+	// gone rather than racing the first (cache-hit, instant) lookup.
+	adultFilterTimeout = -time.Second
+	t.Cleanup(func() { adultFilterTimeout = prev })
+
+	in := []SearchResult{{Name: "Out Of Budget Adult Title"}}
+	got := dropAdult(append([]SearchResult(nil), in...))
+	if len(got) != 1 {
+		t.Fatalf("kept %d results with no budget, want 1 (fail open)", len(got))
+	}
+}
+
+// The filter must not inherit the search's remaining time. It used to, and a
+// slow fan-out then left classification with an already-expired deadline —
+// so the filter silently passed adult titles through exactly when the search
+// had been slowest. Its budget is its own, independent of any caller context.
+func TestDropAdultDoesNotInheritAnExhaustedCallerDeadline(t *testing.T) {
+	seedAdultCache(t, "Exhausted Deadline Adult Title", true)
+
+	// The shape that used to break it: a caller context long past its
+	// deadline. dropAdult takes no context now, so this cannot reach it.
+	expired, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	<-expired.Done()
+
+	in := []SearchResult{{Name: "Exhausted Deadline Adult Title"}}
+	got := dropAdult(append([]SearchResult(nil), in...))
+	if len(got) != 0 {
+		t.Fatalf("kept %d results, want 0: an exhausted caller deadline must not disable the filter", len(got))
+	}
+}

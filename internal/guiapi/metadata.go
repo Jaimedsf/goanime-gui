@@ -27,6 +27,10 @@ var tagsToStrip = []string{
 	"[PT-BR]", "[Português]", "[Portuguese]", "[English]", "[Multilanguage]",
 	"[Legendado]", "[Dublado]", "[Movie]", "[TV]",
 	"(Dublado)", "(Legendado)", "(Dub)", "(Sub)",
+	// Goyabu marks uncensored cuts this way. Stripping it is not only about
+	// the adult filter: "Overflow (Sem Censura)" does not resolve on AniList
+	// at all, so the card was also losing its cover and release date.
+	"(Sem Censura)", "[Sem Censura]", "(Uncensored)", "[Uncensored]",
 }
 
 // normalizeTitle strips the scraper tags so AniList gets a clean query and
@@ -63,6 +67,12 @@ type aniListMedia struct {
 	info   TitleInfo
 	cover  string
 	thumbs map[string]string
+	// adult is AniList's isAdult flag, used to keep adult titles out of the
+	// search results. It rides this lookup rather than a query of its own:
+	// the cards already resolve most results here for their artwork and
+	// dates, so the flag costs one more field on a request that was
+	// happening anyway.
+	adult bool
 }
 
 // EpisodeArt is the artwork for one title's episode grid: the per-episode
@@ -183,12 +193,27 @@ func lookupAniList(title string) *aniListMedia {
 	return m
 }
 
+// isAdultTitle reports whether AniList flags a scraper result as adult.
+//
+// It is deliberately **fail-open**: a title AniList does not recognise, or a
+// lookup that failed, answers false and the result is shown. The scrapers
+// decorate titles heavily ("[PT-BR] Overflow (Sem Censura) (Dublado)"), and
+// normalizeTitle does not always land on the right entry — so the failure
+// mode has to be chosen. Hiding on an unknown would silently drop ordinary
+// results the user searched for by name, which is a worse outcome than the
+// filter leaking. See searchWithContext for what that means for the toggle.
+func isAdultTitle(name string) bool {
+	m := lookupAniList(name)
+	return m != nil && m.adult
+}
+
 // anilistQuery pulls everything the GUI needs about a title in one request:
 // artwork, release dates and the episode stills. Splitting these across
 // separate queries would triple the calls against a rate-limited API for no
 // benefit.
 const anilistQuery = `query ($search: String) {
 	Media(search: $search, type: ANIME) {
+		isAdult
 		format
 		status
 		episodes
@@ -211,6 +236,7 @@ const anilistQuery = `query ($search: String) {
 func fetchAniListMedia(title string) *aniListMedia {
 	var parsed struct {
 		Media struct {
+			IsAdult      bool   `json:"isAdult"`
 			Format       string `json:"format"`
 			Status       string `json:"status"`
 			Episodes     int    `json:"episodes"`
@@ -240,6 +266,7 @@ func fetchAniListMedia(title string) *aniListMedia {
 	m := parsed.Media
 	out := &aniListMedia{
 		cover:  m.CoverImage.Large,
+		adult:  m.IsAdult,
 		thumbs: make(map[string]string, len(m.StreamingEpisodes)),
 	}
 	if out.cover == "" {

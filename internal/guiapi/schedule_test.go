@@ -277,3 +277,30 @@ func TestScheduleItemCarriesTitleVariants(t *testing.T) {
 		t.Errorf("ScheduleItem dropped fields: %+v", item)
 	}
 }
+
+// airingSchedules takes no isAdult argument, so the week arrives with the
+// flagged titles in it and lay-out is the only place they can be dropped.
+// The entry must be gone from the day *and* from the counts.
+func TestLayOutWeekDropsAdultEntries(t *testing.T) {
+	t.Parallel()
+
+	start := time.Date(2099, 1, 5, 0, 0, 0, 0, time.Local) // a Monday
+	tuesday := start.AddDate(0, 0, 1).Add(23 * time.Hour)
+
+	snap := &scheduleSnapshot{
+		start:     start,
+		fetchedAt: time.Now(),
+		entries: []ScheduleEntry{
+			{Title: "Safe", AiringAt: tuesday.Unix()},
+			{Title: "Adult", AiringAt: tuesday.Unix(), adult: true},
+		},
+	}
+
+	week := layOutWeek(snap, start)
+	if week.Total != 1 {
+		t.Errorf("Total = %d, want 1", week.Total)
+	}
+	if len(week.Days[1].Entries) != 1 || week.Days[1].Entries[0].Title != "Safe" {
+		t.Errorf("Tuesday = %v, want only \"Safe\"", week.Days[1].Entries)
+	}
+}

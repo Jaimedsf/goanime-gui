@@ -228,6 +228,7 @@ changes here**.
 | Play **or** download from the same episode dialog | `App.PlayEpisode`, `App.StartDownload` |
 | Downloads drawer: live progress, cancel, clear, open folder | `App.DownloadStatus`, `download:progress` events |
 | Favorites: star a title, home screen keeps them | `App.ToggleFavorite`, `App.Favorites` |
+| Remove one title from the history without clearing it all | `App.ForgetTitle` |
 | Continue watching: recent titles, watched episodes ticked | `App.RecentlyWatched`, `App.WatchedEpisodes` |
 | Episode artwork falls back to the AniList poster | `App.GetEpisodeArt` |
 
@@ -369,7 +370,9 @@ for anyone who follows *One Piece*.
   would drop an episode airing exactly at midnight, so the window is
   widened by a second on each side.
 - **`airingSchedules` takes no `isAdult` argument** the way `media` does, so
-  adult titles are filtered out after the fetch rather than in the query.
+  the flag rides along on the entry and `layOutWeek` drops the flagged ones
+  when it lays the week out. The field stays unexported: it exists for that
+  filter and never reaches the frontend.
 - **Seven columns, always**, even on a day nothing airs. A grid that grew
   and shrank would move under the cursor as the week progressed.
 - The week is cached for 15 minutes and re-laid-out per call, so starring a
@@ -429,6 +432,32 @@ user sees which ones actually carry it rather than being promised something
 that may exist nowhere. When nothing is found, the empty state says so
 plainly instead of looking like a failure.
 
+For that empty state to be reachable, "no source matched" has to travel
+separately from "the sources failed". Both leave the search with nothing to
+show, so `providers.SearchAll` reports both as errors — but it wraps the
+first in **`providers.ErrNoResults`**, and `searchWithContext` turns that
+one into an empty result set rather than an error. Without the sentinel a
+title the scrapers simply do not carry (an AniList-only entry, a hentai one,
+anything obscure) surfaced as a red *"A busca falhou: a busca falhou: no
+results found for: …"* — a doubled prefix, an English tail, and a failure
+that never happened.
+
+Which of the two it is turns on **how many sources answered**, not on
+whether any of them errored. `finishSearch` counts the sources that
+completed without failing, and one clean "nothing here" is enough to call
+the search empty even when another source failed beside it. Counting errors
+instead meant a single source hiccupping — AnimeFire returning a transient
+`404`, say — outvoted three sources that had already answered, and an
+ordinary empty search for an obscure title came back as an outage. The
+partial failure is logged at debug level rather than returned; it changes
+nothing about the answer.
+
+The consequence to be aware of: "Nenhuma fonte tem este título" is a claim
+about the sources that answered. A source that failed, or one the circuit
+breaker is holding open, is not represented in it — the same trade the
+breaker already makes elsewhere, and a far better one than showing a red
+failure over an answer the other sources gave.
+
 | Call | Purpose |
 |---|---|
 | `App.Browse(query)` | One page; the zero query means the season airing now |
@@ -452,8 +481,60 @@ plainly instead of looking like a failure.
 - **Genres are fetched from AniList** (`GenreCollection`) so the filter
   stays in sync, translated through a map that falls back to AniList's own
   spelling — a genre added upstream still works, just untranslated. Hentai
-  is excluded because `isAdult: false` filters it out of every query anyway,
-  so offering it would only produce empty pages.
+  is dropped from the list, because `isAdult: false` filters it out of every
+  query anyway and the filter would only produce empty pages.
+
+### Adult titles are always filtered out
+
+There is no toggle and no dedicated tab, and that is deliberate rather than
+unfinished. Both were built and abandoned before release: a header chip that
+lifted the filter, and a fifth tab that asked AniList for `isAdult: true`.
+The listing they produced was not playable. The scrapers GoAnime searches
+carry almost none of those titles, so a click came back empty nearly every
+time, and a tab whose whole purpose fails is worse than no tab.
+
+What survived from that work is the filter, applied unconditionally:
+
+- The catalog query pins **`isAdult: false`** as a literal, so AniList never
+  returns a flagged title. A literal rather than a variable, because the
+  other two values (`true`, and an absent argument meaning "both") have no
+  caller and reintroducing one would be a product decision, not a refactor.
+- The calendar drops flagged entries in `layOutWeek`, because
+  `airingSchedules` has no `isAdult` argument to filter on.
+- Search results are classified after the fact by `dropAdult` — see below.
+
+#### Search is filtered differently, and only best-effort
+
+The catalog asks AniList for a filtered list. Search cannot: it goes to the
+scrapers, which carry no adult flag at all. So `dropAdult` classifies the
+results *after the fact*, by resolving each title through `lookupAniList`.
+
+That lookup is the one the cards already run for their artwork and release
+dates, and it is memoised per normalised title — so the filter adds a field
+to an existing query rather than a query of its own, and repeat searches are
+free.
+
+Two properties worth stating plainly, because they are design choices and
+not accidents:
+
+- **It is fail-open.** A title AniList cannot resolve is *shown*. The
+  scrapers decorate titles heavily (`[PT-BR] Overflow (Sem Censura)
+  (Dublado)`) and `normalizeTitle` does not always land on the right entry.
+  Hiding on an unknown would silently drop ordinary results the user
+  searched for by name — a worse failure than the filter leaking. **The
+  filter hides adult content; it does not guarantee its absence.** It is a
+  browsing convenience, not a parental control, and the UI must not imply
+  otherwise.
+- **The classification has its own time budget** (`adultFilterTimeout`),
+  deliberately not the search's remaining time. Sharing the search deadline
+  meant a slow fan-out left nothing for classification, and the filter then
+  failed open exactly when the search had been slowest — silently, since a
+  fail-open result is indistinguishable from "nothing adult here". A test
+  pins this.
+
+`dropAdult` runs at the entry points (`Search`, `SearchTitles`) rather than
+inside `searchWithContext`, so a catalog click classifies its merged,
+de-duplicated list once instead of once per title variant.
 
 ### Why a catalog click used to return English-only results
 
@@ -582,6 +663,12 @@ read or delete the file by hand.
   seasons both numbered from 1 do not collide.
 - `RecordWatch` runs from `PlayEpisode` **only after the player actually
   starts**, so a failed launch does not pollute the history.
+- A history card stands for a **title**, not an episode — `RecentlyWatched`
+  collapses them — so its ✕ calls `ForgetTitle` and drops every episode of
+  that title, which is what the card was showing. It is not confirmed, like
+  the Clear-history button beside it: the undo is watching the episode
+  again, and a dialog per deletion would be in the way of the case it exists
+  for.
 
 ## Downloads
 

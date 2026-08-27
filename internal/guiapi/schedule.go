@@ -62,6 +62,10 @@ type ScheduleEntry struct {
 	// Aired marks an episode whose broadcast time has already passed, so the
 	// UI can dim it instead of implying it is still coming.
 	Aired bool `json:"aired"`
+	// adult carries AniList's isAdult flag. The week is fetched and cached
+	// whole, so the flag rides along on the entry and layOutWeek drops the
+	// flagged ones on the way out. It never reaches the frontend.
+	adult bool
 
 	// matchKeys are the normalised title variants used to recognise a
 	// favorite. They exist only for that comparison, so they stay unexported
@@ -127,7 +131,8 @@ var (
 	scheduleCache *scheduleSnapshot
 )
 
-// Schedule returns the week ahead, with the user's favorites marked.
+// Schedule returns the week ahead, with the user's favorites marked. Titles
+// AniList flags as adult are left out of the calendar.
 func Schedule() (WeekSchedule, error) {
 	return buildSchedule(false)
 }
@@ -168,7 +173,8 @@ func buildSchedule(force bool) (WeekSchedule, error) {
 	return layOutWeek(snap, start), nil
 }
 
-// layOutWeek splits the fetched entries into days and marks favorites.
+// layOutWeek splits the fetched entries into days and marks favorites,
+// leaving out the titles AniList flags as adult.
 func layOutWeek(snap *scheduleSnapshot, start time.Time) WeekSchedule {
 	favs := favoriteMatchKeys()
 	now := time.Now()
@@ -201,6 +207,10 @@ func layOutWeek(snap *scheduleSnapshot, start time.Time) WeekSchedule {
 	}
 
 	for _, e := range snap.entries {
+		if e.adult {
+			continue
+		}
+
 		at := time.Unix(e.AiringAt, 0).Local()
 		idx, ok := byDate[at.Format("2006-01-02")]
 		if !ok {
@@ -349,11 +359,6 @@ func fetchSchedule(start, end time.Time) ([]ScheduleEntry, bool, error) {
 
 		for _, s := range parsed.Page.AiringSchedules {
 			m := s.Media
-			// The catalog filters adult titles out with isAdult:false;
-			// airingSchedules takes no such argument, so it is done here.
-			if m.Adult {
-				continue
-			}
 
 			cover := m.CoverImage.Large
 			if cover == "" {
@@ -374,6 +379,10 @@ func fetchSchedule(start, end time.Time) ([]ScheduleEntry, bool, error) {
 				Time:     at.Format("15:04"),
 				Format:   m.Format,
 				Status:   m.Status,
+				// airingSchedules takes no isAdult argument the way media
+				// does, so the flag is carried through and applied in
+				// layOutWeek rather than filtered in the query.
+				adult: m.Adult,
 				// Synonyms exist only to recognise favorites, so they are
 				// folded into the match keys here and go no further.
 				matchKeys: matchKeysFor(append([]string{

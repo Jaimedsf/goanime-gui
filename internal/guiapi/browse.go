@@ -29,7 +29,9 @@ const browsePerPage = 40
 // barely change within a session, and AniList is rate-limited.
 var browseCache sync.Map // map[string]*BrowsePage
 
-// genreCache memoises AniList's genre list, which is fetched once.
+// genreCache memoises AniList's genre list, which is fetched once. Hentai
+// is stripped from it: every catalog query sends isAdult:false, so the entry
+// could only ever produce empty pages.
 var (
 	genreOnce sync.Once
 	genreList []GenreOption
@@ -181,7 +183,6 @@ var genreLabels = map[string]string{
 	"Sports":          "Esportes",
 	"Supernatural":    "Sobrenatural",
 	"Thriller":        "Suspense",
-	"Hentai":          "Hentai",
 	"Historical":      "Histórico",
 	"Military":        "Militar",
 	"School":          "Escolar",
@@ -230,6 +231,10 @@ func formatLabel(format string) string {
 // GenreOptions returns AniList's genre list, translated where known and led
 // by an "any" entry. The list is fetched once; on failure a small built-in
 // set is used so the dropdown is never empty.
+//
+// Hentai is dropped from whatever AniList returns: every catalog query sends
+// isAdult:false, so offering it as a filter would only ever produce empty
+// pages.
 func GenreOptions() []GenreOption {
 	genreOnce.Do(func() {
 		names, err := fetchGenres()
@@ -238,15 +243,15 @@ func GenreOptions() []GenreOption {
 		}
 		genreList = make([]GenreOption, 0, len(names)+1)
 		genreList = append(genreList, GenreOption{Value: "", Label: "Qualquer gênero"})
+
 		for _, n := range names {
-			// Hentai is filtered out of every query by isAdult:false, so
-			// offering it as a filter would only produce empty pages.
 			if n == "Hentai" {
 				continue
 			}
 			genreList = append(genreList, GenreOption{Value: n, Label: genreLabel(n)})
 		}
 	})
+
 	return genreList
 }
 
@@ -464,6 +469,9 @@ const browseQuery = `query (
 		pageInfo { hasNextPage }
 		media(
 			type: ANIME
+			# Literal, not a variable: AniList's isAdult is three-valued —
+			# false lists only non-adult titles, true only adult ones, and an
+			# absent argument lists both. The catalog always wants the first.
 			isAdult: false
 			season: $season
 			seasonYear: $seasonYear
@@ -792,7 +800,9 @@ func SearchTitles(item BrowseItem, sourceID string) ([]SearchResult, error) {
 	if len(merged) == 0 && lastEr != nil {
 		return nil, lastEr
 	}
-	return merged, nil
+	// Classify once, on the merged list: the variants overlap heavily, so
+	// filtering per variant would repeat the same work three times over.
+	return dropAdult(merged), nil
 }
 
 // titleVariants returns the distinct names worth searching for, romaji

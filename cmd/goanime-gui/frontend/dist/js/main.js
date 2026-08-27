@@ -60,7 +60,8 @@ els.tabs.addEventListener("click", (e) => {
 // to do once one of its buttons has focus.
 els.tabs.addEventListener("keydown", (e) => {
   if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-  const btns = [...els.tabs.querySelectorAll(".tab")];
+  // :not([hidden]) so arrowing can never land on a tab the user cannot see.
+  const btns = [...els.tabs.querySelectorAll(".tab:not([hidden])")];
   const i = btns.indexOf(document.activeElement);
   if (i < 0) return;
   e.preventDefault();

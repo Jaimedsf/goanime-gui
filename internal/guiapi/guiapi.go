@@ -178,7 +178,11 @@ func Search(query, sourceID string) ([]SearchResult, error) {
 	ctx, done := beginSearch()
 	defer done()
 
-	return searchWithContext(ctx, query, sourceID)
+	results, err := searchWithContext(ctx, query, sourceID)
+	if err != nil {
+		return nil, err
+	}
+	return dropAdult(results), nil
 }
 
 // beginSearch supersedes any in-flight search and registers the new one as
@@ -238,6 +242,78 @@ func searchWithContext(ctx context.Context, query, sourceID string) ([]SearchRes
 		})
 	}
 	return results, nil
+}
+
+// adultFilterConcurrency bounds the AniList lookups the filter needs. It
+// matches the enrichment passes in the frontend for the same reason: a
+// rate-limited API answers 429 to a burst, and these lookups are shared with
+// the cards' artwork so most of them are cache hits anyway.
+const adultFilterConcurrency = 4
+
+// adultFilterTimeout bounds the classification pass.
+//
+// It is deliberately a budget of its own rather than whatever the search had
+// left. Sharing the search's deadline meant a slow fan-out — AnimeFire
+// retrying, say — left nothing for classification, and the filter then failed
+// open precisely when it had the most work to do. That failure was silent:
+// fail-open is indistinguishable from "nothing adult here". A var so tests
+// can shrink it.
+var adultFilterTimeout = 15 * time.Second
+
+// dropAdult removes titles AniList flags as adult.
+//
+// The filter is best-effort by construction — see isAdultTitle — so it hides
+// adult content rather than guaranteeing its absence. It is a browsing
+// convenience, not a parental control, and the UI must not promise more than
+// that.
+//
+// It runs at the entry points rather than inside searchWithContext so that
+// SearchTitles classifies its merged, de-duplicated list once instead of once
+// per title variant.
+func dropAdult(results []SearchResult) []SearchResult {
+	if len(results) == 0 {
+		return results
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), adultFilterTimeout)
+	defer cancel()
+
+	flags := make([]bool, len(results))
+	var (
+		wg sync.WaitGroup
+		ch = make(chan int, len(results))
+	)
+	for i := range results {
+		ch <- i
+	}
+	close(ch)
+
+	workers := min(adultFilterConcurrency, len(results))
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range ch {
+				// Out of budget: the remaining entries keep their zero value
+				// and are shown, the same fail-open rule an unknown title
+				// gets.
+				if ctx.Err() != nil {
+					return
+				}
+				flags[i] = isAdultTitle(results[i].Name)
+			}
+		}()
+	}
+	wg.Wait()
+
+	kept := results[:0]
+	for i, r := range results {
+		if flags[i] {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	return kept
 }
 
 // animeFromResult reconstructs a minimal *models.Anime from a GUI

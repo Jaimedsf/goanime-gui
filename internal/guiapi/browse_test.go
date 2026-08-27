@@ -248,14 +248,15 @@ func TestModeAndFormatOptionsArePopulated(t *testing.T) {
 	}
 }
 
-// Hentai is excluded by isAdult:false on every query, so offering it as a
-// filter would only ever produce empty pages.
+// Every catalog query sends isAdult:false, so Hentai is excluded from the
+// results anyway and offering it as a filter would only ever produce empty
+// pages.
 func TestGenreOptionsLeadWithAnyAndExcludeAdult(t *testing.T) {
 	t.Parallel()
 
 	genres := GenreOptions()
 	if len(genres) < 2 {
-		t.Fatalf("GenreOptions() returned %d entries", len(genres))
+		t.Fatalf("GenreOptions returned %d entries", len(genres))
 	}
 	if genres[0].Value != "" {
 		t.Errorf("the genre list must lead with an \"any\" entry, got %q", genres[0].Value)
@@ -266,6 +267,18 @@ func TestGenreOptionsLeadWithAnyAndExcludeAdult(t *testing.T) {
 		}
 		if g.Label == "" {
 			t.Errorf("genre %q has no label", g.Value)
+		}
+	}
+}
+
+// The fallback list is used when AniList cannot be reached, and it must not
+// smuggle back the entry GenreOptions is there to strip.
+func TestFallbackGenresOfferNoHentai(t *testing.T) {
+	t.Parallel()
+
+	for _, g := range fallbackGenres() {
+		if g == "Hentai" {
+			t.Error("fallbackGenres must not offer Hentai")
 		}
 	}
 }
