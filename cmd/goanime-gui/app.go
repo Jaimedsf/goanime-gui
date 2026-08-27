@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 
@@ -325,22 +327,42 @@ func (a *App) DownloadsFolder() string {
 // manager.
 func (a *App) OpenDownloadsFolder() error {
 	dir := guiapi.DownloadsFolder()
+
+	// Check before launching. The path is not a constant -- it is the -o
+	// flag's value when one was given -- and handing a stale or misspelled
+	// one to the file manager is a silent no-op on Windows, where explorer
+	// reports success regardless. Failing here says which directory was
+	// missing instead.
+	info, err := os.Stat(dir)
+	if err != nil {
+		return fmt.Errorf("a pasta de downloads não existe: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%q não é uma pasta", dir)
+	}
+
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":
+		// #nosec G204 -- the program is a literal; only the argument varies,
+		// and it is a directory this process just confirmed exists. It comes
+		// from the -o flag the user running the app chose for their own
+		// downloads, so there is no privilege boundary being crossed.
 		cmd = exec.Command("explorer", dir)
 	case "darwin":
+		// #nosec G204 -- see the Windows branch above.
 		cmd = exec.Command("open", dir)
 	default:
+		// #nosec G204 -- see the Windows branch above.
 		cmd = exec.Command("xdg-open", dir)
 	}
 	// explorer.exe returns a non-zero exit code even when it succeeds, so
 	// the error is deliberately not propagated on Windows.
-	err := cmd.Start()
+	startErr := cmd.Start()
 	if runtime.GOOS == "windows" {
 		return nil
 	}
-	return err
+	return startErr
 }
 
 // --- misc ----------------------------------------------------------------

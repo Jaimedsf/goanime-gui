@@ -112,6 +112,9 @@ func findOwnWindow() uintptr {
 	var found uintptr
 	cb := windows.NewCallback(func(hwnd uintptr, _ uintptr) uintptr {
 		var wndPID uint32
+		// #nosec G103 -- passing a pointer to a syscall is the only way to
+		// call GetWindowThreadProcessId; the target is a local uint32 whose
+		// lifetime spans the call.
 		_, _, _ = procGetWindowThreadPID.Call(hwnd, uintptr(unsafe.Pointer(&wndPID)))
 		if uintptr(wndPID) != pid {
 			return 1 // keep enumerating
