@@ -374,3 +374,58 @@ func TestClearImageCache(t *testing.T) {
 		t.Errorf("clearing an absent cache: %v", err)
 	}
 }
+
+// The LRU touch changes the file's mtime on every hit, so Last-Modified
+// could never be a usable validator. The ETag has to be the one, or a
+// revalidating webview re-transfers the whole image every time.
+func TestImageProxyRevalidatesWithAnETag(t *testing.T) {
+	useTempImageCache(t)
+	origin, hits := imageOrigin(t, onePixelPNG, "image/png")
+	target := origin.URL + "/cover.png"
+
+	first := httptest.NewRecorder()
+	ImageProxy(notReached(t)).ServeHTTP(first, imageRequest(target))
+
+	etag := first.Header().Get("ETag")
+	if etag == "" {
+		t.Fatal("no ETag was served")
+	}
+	if lm := first.Header().Get("Last-Modified"); lm != "" {
+		t.Errorf("Last-Modified = %q; the mtime moves on every hit, so it must not be sent", lm)
+	}
+	if cc := first.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+		t.Errorf("Cache-Control = %q, want it to mark the body immutable", cc)
+	}
+
+	// A conditional request must come back empty.
+	req := imageRequest(target)
+	req.Header.Set("If-None-Match", etag)
+	second := httptest.NewRecorder()
+	ImageProxy(notReached(t)).ServeHTTP(second, req)
+
+	if second.Code != http.StatusNotModified {
+		t.Errorf("status %d for a matching If-None-Match, want 304", second.Code)
+	}
+	if second.Body.Len() != 0 {
+		t.Errorf("304 carried %d bytes of body", second.Body.Len())
+	}
+	if n := hits.Load(); n != 1 {
+		t.Errorf("the origin was hit %d times, want 1", n)
+	}
+}
+
+// Two different images must not share a validator, or the webview would
+// serve one in place of the other.
+func TestImageProxyETagsDifferPerImage(t *testing.T) {
+	useTempImageCache(t)
+	origin, _ := imageOrigin(t, onePixelPNG, "image/png")
+
+	a := httptest.NewRecorder()
+	ImageProxy(notReached(t)).ServeHTTP(a, imageRequest(origin.URL+"/a.png"))
+	b := httptest.NewRecorder()
+	ImageProxy(notReached(t)).ServeHTTP(b, imageRequest(origin.URL+"/b.png"))
+
+	if a.Header().Get("ETag") == b.Header().Get("ETag") {
+		t.Error("two URLs were served the same ETag")
+	}
+}

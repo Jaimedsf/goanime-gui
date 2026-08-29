@@ -111,6 +111,10 @@ type WeekSchedule struct {
 	// Partial is true when the page walk was cut short, meaning the tail of a
 	// very busy week is missing.
 	Partial bool `json:"partial"`
+	// Stale marks a week served from the cache past its TTL. The data is
+	// good enough to show — airing times barely move — but the frontend
+	// should refresh behind it rather than leave it as the final answer.
+	Stale bool `json:"stale"`
 }
 
 // scheduleSnapshot is one fetched week. Entries are stored without their
@@ -146,31 +150,97 @@ func buildSchedule(force bool) (WeekSchedule, error) {
 	start := weekStartFor(time.Now())
 	end := start.AddDate(0, 0, scheduleDays)
 
-	scheduleMu.Lock()
-	snap := scheduleCache
-	if force || snap == nil || !snap.start.Equal(start) ||
-		time.Since(snap.fetchedAt) > scheduleTTL {
-		snap = nil
+	// A stored week is served whatever its age, and only its freshness is
+	// reported. Blocking on the fetch is what made every launch cost a
+	// paged walk through AniList — eight requests spaced by the rate
+	// limiter — on the tab that opens first, with nothing on screen until
+	// it finished. Stale data now paints instantly and the frontend
+	// refreshes behind it.
+	if !force {
+		if snap := cachedWeek(start); snap != nil {
+			week := layOutWeek(snap, start)
+			week.Stale = time.Since(snap.fetchedAt) > scheduleTTL
+			return week, nil
+		}
 	}
-	scheduleMu.Unlock()
 
-	if snap == nil {
-		entries, partial, err := fetchSchedule(start, end)
-		if err != nil {
-			return WeekSchedule{}, err
-		}
-		snap = &scheduleSnapshot{
-			start:     start,
-			fetchedAt: time.Now(),
-			partial:   partial,
-			entries:   entries,
-		}
-		scheduleMu.Lock()
-		scheduleCache = snap
-		scheduleMu.Unlock()
+	entries, partial, err := fetchSchedule(start, end)
+	if err != nil {
+		return WeekSchedule{}, err
 	}
+	snap := &scheduleSnapshot{
+		start:     start,
+		fetchedAt: time.Now(),
+		partial:   partial,
+		entries:   entries,
+	}
+
+	scheduleMu.Lock()
+	scheduleCache = snap
+	scheduleMu.Unlock()
+	storeWeek(snap)
 
 	return layOutWeek(snap, start), nil
+}
+
+// cachedWeek returns the snapshot for the given week, from memory or from
+// the file, or nil when neither holds this week. A snapshot from a week
+// that has rolled over is no use and is not returned.
+func cachedWeek(start time.Time) *scheduleSnapshot {
+	scheduleMu.Lock()
+	snap := scheduleCache
+	scheduleMu.Unlock()
+	if snap != nil && snap.start.Equal(start) {
+		return snap
+	}
+
+	stored := metaCacheSchedule()
+	if stored == nil || !stored.Start.Equal(start) {
+		return nil
+	}
+
+	snap = &scheduleSnapshot{
+		start:     stored.Start,
+		fetchedAt: stored.FetchedAt,
+		partial:   stored.Partial,
+		entries:   make([]ScheduleEntry, 0, len(stored.Entries)),
+	}
+	for _, e := range stored.Entries {
+		entry := e.Entry
+		entry.adult = e.Adult
+		entry.matchKeys = e.MatchKeys
+		snap.entries = append(snap.entries, entry)
+	}
+
+	// Promote it to the in-memory cache so the next call this session does
+	// not re-read and re-convert the file.
+	scheduleMu.Lock()
+	scheduleCache = snap
+	scheduleMu.Unlock()
+	return snap
+}
+
+// storeWeek writes a freshly fetched week to the file.
+func storeWeek(snap *scheduleSnapshot) {
+	stored := &cachedSchedule{
+		Start:     snap.start,
+		FetchedAt: snap.fetchedAt,
+		Partial:   snap.partial,
+		Entries:   make([]cachedScheduleEntry, 0, len(snap.entries)),
+	}
+	for _, e := range snap.entries {
+		// Favorite and Aired are recomputed on every call, so they are
+		// cleared rather than written down as they happened to be now.
+		entry := e
+		entry.Favorite = false
+		entry.Aired = false
+		stored.Entries = append(stored.Entries, cachedScheduleEntry{
+			Entry:     entry,
+			Adult:     e.adult,
+			MatchKeys: e.matchKeys,
+		})
+	}
+	metaCachePutSchedule(stored)
 }
 
 // layOutWeek splits the fetched entries into days and marks favorites,
