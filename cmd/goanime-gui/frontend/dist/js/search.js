@@ -46,9 +46,8 @@ export async function searchByTitle(title, queryText, run) {
     } else {
       clear(els.results);
       els.resultsEmpty.hidden = false;
-      els.resultsEmpty.querySelector(".empty-title").textContent =
-        "Nenhuma fonte tem este título";
-      els.resultsEmpty.querySelector(".empty-sub").textContent =
+      els.resultsEmptyTitle.textContent = "Nenhuma fonte tem este título";
+      els.resultsEmptySub.textContent =
         "Os dados vêm do AniList, que lista tudo que existe; nem todo título está disponível nas fontes.";
       setStatus("");
     }
@@ -106,9 +105,8 @@ export async function runSearch(query, source) {
     } else {
       clear(els.results);
       els.resultsEmpty.hidden = false;
-      els.resultsEmpty.querySelector(".empty-title").textContent =
-        "Nenhum resultado";
-      els.resultsEmpty.querySelector(".empty-sub").textContent =
+      els.resultsEmptyTitle.textContent = "Nenhum resultado";
+      els.resultsEmptySub.textContent =
         "Tente um termo mais curto, ou mude a fonte para “Todas as fontes”.";
       setStatus("");
     }

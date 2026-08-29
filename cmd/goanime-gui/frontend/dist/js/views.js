@@ -31,7 +31,9 @@ function hidePanes() {
 // markTabs highlights the active tab, or none while an overlay (results,
 // episodes) is covering them.
 function markTabs(id) {
-  for (const btn of els.tabs.querySelectorAll(".tab")) {
+  for (const btn of /** @type {NodeListOf<HTMLElement>} */ (
+    els.tabs.querySelectorAll(".tab")
+  )) {
     btn.setAttribute("aria-selected", String(btn.dataset.tab === id));
   }
 }

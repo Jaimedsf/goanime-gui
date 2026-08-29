@@ -107,6 +107,40 @@ for (const [file, body] of Object.entries(source)) {
   }
 }
 
+// --- 3b. class selectors resolve to a class something actually sets --------
+// The id chain above is only half the DOM surface: the frontend also reaches
+// for `.empty-title` and friends with querySelector, and those return null
+// with no warning when the class is renamed. That is the same failure the id
+// check exists to prevent, so it gets the same treatment.
+//
+// A class counts as real if index.html carries it or some module assigns it
+// — several of these elements are built at runtime and never appear in the
+// HTML at all.
+const liveClasses = new Set();
+for (const m of html.matchAll(/\bclass="([^"]+)"/g)) {
+  for (const c of m[1].split(/\s+/)) if (c) liveClasses.add(c);
+}
+for (const body of Object.values(source)) {
+  // `x.className = "a b"`, `` x.className = `a ${b}` `` and classList.add("a")
+  for (const m of body.matchAll(/\.className\s*=\s*[`"]([^`"]*)/g)) {
+    for (const c of m[1].split(/\s+/)) if (c && !c.includes("$")) liveClasses.add(c);
+  }
+  for (const m of body.matchAll(/\.classList\.(?:add|toggle)\("([^"]+)"/g)) {
+    liveClasses.add(m[1]);
+  }
+}
+
+for (const [file, body] of Object.entries(source)) {
+  for (const m of body.matchAll(/\.querySelector(?:All)?\("\.([A-Za-z0-9_-]+)"\)/g)) {
+    if (!liveClasses.has(m[1])) {
+      fail(
+        file,
+        `querySelector(".${m[1]}") targets a class no markup or module sets`,
+      );
+    }
+  }
+}
+
 // --- 4. exports nobody imports --------------------------------------------
 // A warning, not a failure: dom.js exports `$` for local use and a module may
 // legitimately export something only index.html or the debug hook reaches.

@@ -54,6 +54,7 @@ export function setArtwork(img, url, title) {
     return;
   }
 
+  const src = artworkURL(url);
   let retried = false;
   img.onerror = () => {
     if (!retried) {
@@ -61,13 +62,26 @@ export function setArtwork(img, url, title) {
       setTimeout(() => {
         // A cache-busting suffix would defeat the browser cache for every
         // later paint; the same URL is enough for a dropped connection.
-        img.src = url;
+        img.src = src;
       }, 1200);
       return;
     }
     showArtworkFallback(img, title);
   };
-  img.src = url;
+  img.src = src;
+}
+
+// artworkURL routes remote artwork through the Go side, which keeps the
+// bytes in a cache of its own under the user's cache directory. Going
+// straight to the CDN left that entirely to the webview's HTTP cache — a
+// store the app does not configure and cannot stop from being evicted,
+// which is why covers came down again on every launch.
+//
+// Anything that is not an absolute http(s) URL is returned untouched: data:
+// URIs and the app's own assets have nothing to gain from the round trip.
+export function artworkURL(url) {
+  if (!url || !/^https?:\/\//i.test(url)) return url;
+  return `/img?u=${encodeURIComponent(url)}`;
 }
 
 // showArtworkFallback replaces a failed image with the title's first letter,

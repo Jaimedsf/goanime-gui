@@ -11,10 +11,12 @@
     "format": "prettier --write cmd/goanime-gui/frontend/dist",
     "format:check": "prettier --check cmd/goanime-gui/frontend/dist",
     "check:frontend": "node scripts/check-frontend.mjs",
-    "check": "npm run lint && npm run format:check && npm run check:frontend"
+    "check:types": "tsgo --noEmit",
+    "check": "npm run lint && npm run format:check && npm run check:frontend && npm run check:types"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.0",
+    "@typescript/native-preview": "^7.0.0-dev.20260707.2",
     "eslint": "^9.39.0",
     "globals": "^16.5.0",
     "prettier": "^3.6.2"

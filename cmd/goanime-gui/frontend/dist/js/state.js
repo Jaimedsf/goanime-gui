@@ -6,6 +6,35 @@ export const STORAGE = {
   scheduleFavsOnly: "goanime.schedule.favsOnly",
 };
 
+// The shapes come from the Go bridge; see frontend/types/wails.d.ts. An
+// empty array literal on its own says `never[]`, which makes every later
+// push a type error, so the lists are annotated rather than inferred.
+/**
+ * @type {{
+ *   result: SearchResult | null,
+ *   allResults: SearchResult[],
+ *   episodes: EpisodeResult[],
+ *   seasons: string[],
+ *   season: string,
+ *   episodeArt: EpisodeArt,
+ *   sources: SourceInfo[],
+ *   qualities: QualityOption[],
+ *   favoriteKeys: Set<string>,
+ *   watched: Set<string>,
+ *   player: string,
+ *   quality: string,
+ *   downloads: Map<string, DownloadProgress>,
+ *   catalog: { items: BrowseItem[], query: BrowseQuery | null, page: number, hasNext: boolean },
+ *   tab: string,
+ *   view: string,
+ *   returnTo: string,
+ *   tabsLoaded: Set<string>,
+ *   schedule: WeekSchedule | null,
+ *   scheduleSeq: number,
+ *   searching: boolean,
+ *   searchSeq: number,
+ * }}
+ */
 export const state = {
   result: null, // currently open SearchResult
   allResults: [], // unfiltered search results

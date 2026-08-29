@@ -1,14 +1,37 @@
 // Local to this module: els below is the only lookup surface the rest of
 // the frontend uses, so exporting this would invite bypassing it.
-const $ = (id) => document.getElementById(id);
+//
+// getElementById is typed as possibly null, and every caller here would
+// have to answer for that null. They do not need to: check-frontend.mjs
+// fails the build when any id below is missing from index.html, which is a
+// stronger guarantee than a runtime guard, and it catches the problem at
+// `npm run check` rather than when a user clicks the thing. So the cast is
+// the check talking, not a shrug.
+/** @type {(id: string) => HTMLElement} */
+const $ = (id) => /** @type {HTMLElement} */ (document.getElementById(id));
+
+// The form controls need their specific element types, because the rest of
+// the frontend reads .value and .checked off them. Which ids are controls
+// is worth stating here anyway — it is otherwise only visible in the HTML.
+/** @type {(id: string) => HTMLSelectElement} */
+const $sel = (id) =>
+  /** @type {HTMLSelectElement} */ (document.getElementById(id));
+/** @type {(id: string) => HTMLInputElement} */
+const $input = (id) =>
+  /** @type {HTMLInputElement} */ (document.getElementById(id));
+// Only the buttons something disables need this; the rest are plain
+// elements as far as this file is concerned.
+/** @type {(id: string) => HTMLButtonElement} */
+const $btn = (id) =>
+  /** @type {HTMLButtonElement} */ (document.getElementById(id));
 
 export const els = {
   homeBtn: $("home-btn"),
   form: $("search-form"),
-  query: $("query"),
+  query: $input("query"),
   history: $("search-history"),
-  source: $("source"),
-  searchBtn: $("search-btn"),
+  source: $sel("source"),
+  searchBtn: $btn("search-btn"),
   cancelBtn: $("cancel-btn"),
   playerChip: $("player-chip"),
   playerName: $("player-name"),
@@ -35,43 +58,48 @@ export const els = {
   catalog: $("catalog"),
   catalogCount: $("catalog-count"),
   catalogHeading: $("catalog-heading"),
-  catalogMode: $("catalog-mode"),
+  catalogMode: $sel("catalog-mode"),
   catalogSeasonWrap: $("catalog-season-wrap"),
-  catalogSeason: $("catalog-season"),
-  catalogYear: $("catalog-year"),
-  catalogGenre: $("catalog-genre"),
-  catalogFormat: $("catalog-format"),
+  catalogSeason: $sel("catalog-season"),
+  catalogYear: $sel("catalog-year"),
+  catalogGenre: $sel("catalog-genre"),
+  catalogFormat: $sel("catalog-format"),
   catalogNow: $("catalog-now"),
   catalogReset: $("catalog-reset"),
-  catalogFilter: $("catalog-filter"),
-  catalogPrev: $("catalog-prev"),
-  catalogNext: $("catalog-next"),
+  catalogFilter: $input("catalog-filter"),
+  catalogPrev: $btn("catalog-prev"),
+  catalogNext: $btn("catalog-next"),
   catalogPage: $("catalog-page"),
 
   scheduleWeek: $("schedule-week"),
   scheduleCount: $("schedule-count"),
   scheduleNote: $("schedule-note"),
-  scheduleRefresh: $("schedule-refresh"),
-  scheduleFavsOnly: $("schedule-favs-only"),
+  scheduleRefresh: $btn("schedule-refresh"),
+  scheduleFavsOnly: $input("schedule-favs-only"),
 
   resultsPane: $("results-pane"),
   backToTab: $("back-to-tab"),
   results: $("results"),
   resultsCount: $("results-count"),
   resultsEmpty: $("results-empty"),
+  // Reached by id rather than by querySelector(".empty-title"): the class is
+  // also assigned at runtime by renderError, so a class-based lookup here
+  // could not be checked against the markup. These can.
+  resultsEmptyTitle: $("results-empty-title"),
+  resultsEmptySub: $("results-empty-sub"),
   resultsToolbar: $("results-toolbar"),
-  resultsFilter: $("results-filter"),
-  resultsSort: $("results-sort"),
+  resultsFilter: $input("results-filter"),
+  resultsSort: $sel("results-sort"),
   filterCount: $("filter-count"),
 
   episodesPane: $("episodes-pane"),
   episodes: $("episodes"),
   episodesTitle: $("episodes-title"),
   episodesCount: $("episodes-count"),
-  episodeFilter: $("episode-filter"),
+  episodeFilter: $input("episode-filter"),
   favToggle: $("fav-toggle"),
   seasonWrap: $("season-wrap"),
-  season: $("season"),
+  season: $sel("season"),
   titleMeta: $("title-meta"),
   gateNote: $("gate-note"),
   gateMessage: $("gate-message"),
@@ -80,16 +108,16 @@ export const els = {
   back: $("back-to-results"),
 
   gateModal: $("gate-modal"),
-  gateBundled: $("gate-bundled"),
-  gateHeadless: $("gate-headless"),
-  gateChannel: $("gate-channel"),
+  gateBundled: $input("gate-bundled"),
+  gateHeadless: $input("gate-headless"),
+  gateChannel: $sel("gate-channel"),
   gateSave: $("gate-save"),
   gateCancel: $("gate-cancel"),
 
   episodeModal: $("episode-modal"),
   episodeModalTitle: $("episode-modal-title"),
   episodeModalSub: $("episode-modal-sub"),
-  quality: $("quality"),
+  quality: $sel("quality"),
   actPlay: $("act-play"),
   actDownload: $("act-download"),
   episodeModalCancel: $("episode-modal-cancel"),
@@ -120,7 +148,8 @@ export function setStatus(msg, { error = false, busy = false } = {}) {
   if (msg) els.status.appendChild(document.createTextNode(msg));
 }
 
-let toastTimer = null;
+/** @type {ReturnType<typeof setTimeout> | undefined} */
+let toastTimer;
 
 export function toast(msg) {
   els.toast.textContent = msg;

@@ -1,22 +1,19 @@
 package guiapi
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/alvarorichard/Goanime/internal/api"
 )
 
-// coverCache memoises AniList cover lookups keyed by a normalised title so
-// repeated GetCover calls from the frontend do not re-hit the API.
-var coverCache sync.Map // map[string]string
-
-// mediaCache memoises the combined AniList lookup (dates, format, status,
-// episode stills) keyed by a normalised title.
-var mediaCache sync.Map // map[string]*aniListMedia
+// Both lookups here — the combined media query and GetCover's fallback —
+// are cached by metacache.go, keyed by a normalised title. That cache is
+// backed by a file, so a title resolved in one session is free in the next:
+// the home screen used to re-ask AniList for every card on every launch.
 
 // anilistTimeout bounds the direct AniList calls made here.
 const anilistTimeout = 8 * time.Second
@@ -148,21 +145,27 @@ func GetCover(title string) string {
 	if key == "" {
 		return ""
 	}
-	if v, ok := coverCache.Load(key); ok {
-		return v.(string)
+	if e, ok := metaCacheCover(key); ok {
+		return e.URL
 	}
 
 	// The combined lookup already fetches the cover, so reuse it when this
 	// title has been through it — otherwise a card needing both a cover and
 	// a release date would cost two AniList requests instead of one.
-	if media := lookupAniList(clean); media != nil && media.cover != "" {
-		coverCache.Store(key, media.cover)
+	media, definitive := lookupAniListEntry(clean)
+	if media != nil && media.cover != "" {
+		metaCachePutCover(key, media.cover, false)
 		return media.cover
 	}
 
 	info, err := api.FetchAnimeFromAniList(clean)
 	if err != nil || info == nil {
-		coverCache.Store(key, "")
+		// This client cannot say whether it found nothing or simply
+		// failed, so lean on what the combined lookup learned: it is only
+		// safe to remember "no cover" when AniList positively answered
+		// that the title does not exist. Otherwise a dropped connection
+		// would blank the card until the negative aged out.
+		metaCachePutCover(key, "", !definitive)
 		return ""
 	}
 
@@ -170,7 +173,7 @@ func GetCover(title string) string {
 	if url == "" {
 		url = info.Data.Media.CoverImage.Medium
 	}
-	coverCache.Store(key, url)
+	metaCachePutCover(key, url, false)
 	return url
 }
 
@@ -178,19 +181,53 @@ func GetCover(title string) string {
 // episode stills and release dates. A nil result means AniList had nothing
 // or the call failed; callers treat both the same way.
 func lookupAniList(title string) *aniListMedia {
+	m, _ := lookupAniListEntry(title)
+	return m
+}
+
+// lookupAniListEntry is lookupAniList plus the reason behind a nil:
+// definitive is true only when AniList itself said the title does not
+// exist, and false when the lookup merely failed to complete. GetCover
+// needs that distinction to decide whether an empty answer is worth
+// remembering; everyone else can ignore it.
+func lookupAniListEntry(title string) (media *aniListMedia, definitive bool) {
 	clean := normalizeTitle(title)
 	key := strings.ToLower(clean)
 	if key == "" {
-		return nil
+		return nil, false
 	}
-	if v, ok := mediaCache.Load(key); ok {
-		m, _ := v.(*aniListMedia)
-		return m
+	if e, ok := metaCacheMedia(key); ok {
+		if e.Missing {
+			return nil, !e.transient
+		}
+		return &aniListMedia{info: e.Info, cover: e.Cover, thumbs: e.Thumbs, adult: e.Adult}, true
 	}
 
-	m := fetchAniListMedia(clean)
-	mediaCache.Store(key, m)
-	return m
+	m, err := fetchAniListMedia(clean)
+	switch {
+	case err == nil && m != nil:
+		metaCachePutMedia(key, cachedMedia{
+			Info:   m.info,
+			Cover:  m.cover,
+			Thumbs: m.thumbs,
+			Adult:  m.adult,
+		})
+		return m, true
+
+	case errors.Is(err, errAniListNotFound):
+		// A real "no such title". Worth keeping: the PT-BR scrapers
+		// produce plenty of names AniList will never resolve, and each one
+		// used to cost a request on every single launch.
+		metaCachePutMedia(key, cachedMedia{Missing: true})
+		return nil, true
+	}
+
+	// Anything else failed rather than answered. Remember it briefly and
+	// in memory only, so a page of forty cards does not retry forty times
+	// against an API that is down, without teaching the file on disk that
+	// these titles do not exist.
+	metaCachePutMedia(key, cachedMedia{Missing: true, transient: true})
+	return nil, false
 }
 
 // isAdultTitle reports whether AniList flags a scraper result as adult.
@@ -226,14 +263,15 @@ const anilistQuery = `query ($search: String) {
 	}
 }`
 
-// fetchAniListMedia performs the combined lookup. Returns nil on any
-// network, status or parse failure.
+// fetchAniListMedia performs the combined lookup. The error is what tells a
+// nil result apart: errAniListNotFound means AniList has no such title,
+// anything else means the call did not complete.
 //
 // It goes through anilistPost rather than issuing its own request: that is
 // where the pacing and the 429 retry live, and a cover lookup that bypassed
 // them would be exactly what pushes a cold start over AniList's limit — the
 // home screen can ask for a dozen of these at once.
-func fetchAniListMedia(title string) *aniListMedia {
+func fetchAniListMedia(title string) (*aniListMedia, error) {
 	var parsed struct {
 		Media struct {
 			IsAdult      bool   `json:"isAdult"`
@@ -260,7 +298,7 @@ func fetchAniListMedia(title string) *aniListMedia {
 	}
 
 	if err := anilistPost(anilistQuery, map[string]any{"search": title}, &parsed); err != nil {
-		return nil
+		return nil, err
 	}
 
 	m := parsed.Media
@@ -303,7 +341,7 @@ func fetchAniListMedia(title string) *aniListMedia {
 		EpisodeCount: m.Episodes,
 		Score:        m.AverageScore,
 	}
-	return out
+	return out, nil
 }
 
 var monthNames = [...]string{

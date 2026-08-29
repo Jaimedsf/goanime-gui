@@ -3,6 +3,10 @@ import { state } from "./state.js";
 import { clear, els, humanBytes, setStatus, toast } from "./dom.js";
 
 export async function downloadEpisode(ep) {
+  // No open title means nothing to download against. The modal cannot be
+  // reached without one, so this is a guard, not a path users hit — the
+  // same one onEpisodeChosen already keeps.
+  if (!state.result) return;
   try {
     await app().StartDownload(state.result, ep, state.quality);
     toast(`Episódio ${ep.number || ep.num} na fila`);
@@ -25,7 +29,7 @@ function activeDownloadCount() {
 
 function refreshDownloadsChip() {
   const active = activeDownloadCount();
-  els.downloadsCount.textContent = active || state.downloads.size || 0;
+  els.downloadsCount.textContent = String(active || state.downloads.size || 0);
   els.downloadsCount.classList.toggle("active", active > 0);
 }
 

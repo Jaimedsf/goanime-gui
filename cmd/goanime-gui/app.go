@@ -39,12 +39,20 @@ func (a *App) startup(ctx context.Context) {
 	// Wails only sets the small window icon; this fills in the large one
 	// used by Alt+Tab. It polls for the window, so it runs detached.
 	go applyWindowIcon()
+
+	// Trim the artwork cache if a previous session left it over its
+	// ceiling. Detached: nothing on screen waits for it.
+	guiapi.StartImageCacheMaintenance()
 }
 
 // shutdown clears the progress hook so no event is emitted against a dead
 // context while the window is closing.
 func (a *App) shutdown(_ context.Context) {
 	guiapi.SetProgressHook(nil)
+	// The metadata cache writes itself on a debounce; closing the window a
+	// second after a search would otherwise lose exactly the lookups that
+	// session just paid for.
+	guiapi.FlushMetadataCache()
 }
 
 // --- sources and search --------------------------------------------------

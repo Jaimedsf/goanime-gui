@@ -8,6 +8,7 @@ import (
 	"embed"
 	"log"
 
+	"github.com/alvarorichard/Goanime/internal/guiapi"
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -78,6 +79,11 @@ func main() {
 		Height: 800,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
+			// Serves /img from a local artwork cache, and passes everything
+			// else through to the embedded files. Without it the covers and
+			// episode stills are refetched from the CDN whenever the
+			// webview happens to have dropped them.
+			Middleware: guiapi.ImageProxy,
 		},
 		OnStartup:  app.startup,
 		OnShutdown: app.shutdown,

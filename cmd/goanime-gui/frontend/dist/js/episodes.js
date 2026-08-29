@@ -11,6 +11,7 @@ import {
   setStatus,
   skeletons,
 } from "./dom.js";
+import { artworkURL } from "./cards.js";
 import { showEpisodes } from "./views.js";
 import { sourceInfo } from "./sources.js";
 import { isFavoriteResult, paintStar } from "./cards.js";
@@ -197,7 +198,7 @@ function thumbFor(ep) {
 
 function renderEpisodes(eps) {
   clear(els.episodes);
-  const poster = state.episodeArt.poster || "";
+  const posterSrc = artworkURL(state.episodeArt.poster || "");
 
   for (const ep of eps) {
     const li = document.createElement("li");
@@ -212,12 +213,18 @@ function renderEpisodes(eps) {
     img.className = "episode-thumb";
     img.loading = "lazy";
     img.alt = "";
+    // Compare the attribute, not img.src: the latter reads back as an
+    // absolute URL, which would never equal the relative /img path and
+    // would leave the fallback retrying the poster forever.
     img.onerror = () => {
-      if (poster && img.src !== poster) img.src = poster;
-      else img.style.visibility = "hidden";
+      if (posterSrc && img.getAttribute("src") !== posterSrc) {
+        img.src = posterSrc;
+      } else {
+        img.style.visibility = "hidden";
+      }
     };
     const t = thumbFor(ep);
-    if (t) img.src = t;
+    if (t) img.src = artworkURL(t);
     main.appendChild(img);
 
     const info = document.createElement("div");
@@ -281,7 +288,9 @@ function renderEpisodes(eps) {
 
 export function applyEpisodeFilter() {
   const term = els.episodeFilter.value.trim().toLowerCase();
-  const items = els.episodes.querySelectorAll(".episode");
+  const items = /** @type {NodeListOf<HTMLElement>} */ (
+    els.episodes.querySelectorAll(".episode")
+  );
   items.forEach((li, i) => {
     const ep = state.episodes[i];
     if (!ep) return;
@@ -290,6 +299,7 @@ export function applyEpisodeFilter() {
   });
 }
 
+/** @type {((value: string | null) => void) | null} */
 let episodeModalResolve = null;
 
 // openEpisodeModal asks what to do with an episode and at which quality.
