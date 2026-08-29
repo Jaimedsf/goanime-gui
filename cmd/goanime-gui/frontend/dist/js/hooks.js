@@ -9,6 +9,12 @@
 // Deliberately two named slots rather than a general event bus: these are the
 // only two edges that need it, and a slot that is never filled fails loudly at
 // the call site instead of silently going nowhere.
+/**
+ * @type {{
+ *   openTitle: (r: SearchResult) => void,
+ *   libraryChanged: () => void,
+ * }}
+ */
 export const hooks = {
   // Open a title's episode list. cards.js -> episodes.js
   openTitle: () => {},

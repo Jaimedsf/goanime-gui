@@ -76,7 +76,9 @@ els.homeBtn.addEventListener("click", () => {
 // One listener on the bar rather than five on the buttons, so the tab set
 // stays a matter of markup.
 els.tabs.addEventListener("click", (e) => {
-  const btn = e.target.closest(".tab");
+  const btn = /** @type {HTMLElement | null} */ (
+    /** @type {Element} */ (e.target).closest(".tab")
+  );
   if (!btn) return;
   state.result = null;
   showTab(btn.dataset.tab);
@@ -88,8 +90,10 @@ els.tabs.addEventListener("click", (e) => {
 els.tabs.addEventListener("keydown", (e) => {
   if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
   // :not([hidden]) so arrowing can never land on a tab the user cannot see.
-  const btns = [...els.tabs.querySelectorAll(".tab:not([hidden])")];
-  const i = btns.indexOf(document.activeElement);
+  const btns = /** @type {HTMLElement[]} */ ([
+    ...els.tabs.querySelectorAll(".tab:not([hidden])"),
+  ]);
+  const i = btns.indexOf(/** @type {HTMLElement} */ (document.activeElement));
   if (i < 0) return;
   e.preventDefault();
   const next =

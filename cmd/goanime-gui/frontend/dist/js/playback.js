@@ -21,6 +21,7 @@ export function setPlayer(id) {
   refreshPlayerChip();
 }
 
+/** @type {((value: string | null) => void) | null} */
 let playerModalResolve = null;
 
 // openPlayerModal resolves to the chosen player id, or null if cancelled.
@@ -74,7 +75,10 @@ export async function openPlayerModal() {
   els.choices.appendChild(browse);
 
   els.playerModal.hidden = false;
-  els.choices.querySelector("button").focus();
+  // There is always at least the "procurar" button appended just above.
+  /** @type {HTMLButtonElement} */ (
+    els.choices.querySelector("button")
+  ).focus();
 
   return new Promise((resolve) => {
     playerModalResolve = resolve;
@@ -89,6 +93,10 @@ export function closePlayerModal(value) {
 }
 
 export async function playEpisode(li, ep) {
+  // No open title means no source to play from; onEpisodeChosen keeps the
+  // same guard before it gets here.
+  if (!state.result) return;
+
   // Ask for a player once, then remember. The Player chip in the header is
   // how the choice gets changed later.
   if (readStorage(STORAGE.player, null) === null) {

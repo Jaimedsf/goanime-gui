@@ -1,3 +1,7 @@
+// The bound Go App, or a thrown error when the runtime is not there. The
+// shape it returns is declared in frontend/types/wails.d.ts, which is the
+// only place the Go API is written down on this side.
+/** @returns {GoApp} */
 export function app() {
   if (!window.go || !window.go.main || !window.go.main.App) {
     throw new Error(

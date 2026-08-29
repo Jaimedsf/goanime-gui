@@ -1,0 +1,26 @@
+{
+  "//": "Type-checking only. There is no build step and no emit: the frontend ships as the hand-written ES modules in cmd/goanime-gui/frontend/dist, embedded by main.go. This exists so `tsgo --noEmit` can check those modules and the Go bridge declarations against each other. Run it with `npm run check:types`.",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": true,
+
+    "target": "es2023",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["es2023", "dom", "dom.iterable"],
+
+    "strict": true,
+    "noImplicitAny": false,
+
+    "noUnusedLocals": false,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+
+    "types": []
+  },
+  "include": [
+    "cmd/goanime-gui/frontend/dist/js/**/*.js",
+    "cmd/goanime-gui/frontend/types/**/*.d.ts"
+  ]
+}
