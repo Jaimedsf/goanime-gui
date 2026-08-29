@@ -11,7 +11,7 @@
 #define MyAppName "GoAnime"
 #define MyAppVersion "1.8.6"
 #define MyAppPublisher "GoAnime Team"
-#define MyAppURL "https://github.com/alvarorichard/GoAnime"
+#define MyAppURL "https://github.com/Jaimedsf/goanime-gui"
 #define MyAppExeName "goanime.exe"
 #define MyAppGuiExeName "goanime-gui.exe"
 

@@ -602,7 +602,7 @@ jobs:
           echo "#### Linux / macOS" >> RELEASE_NOTES.md
           echo '```bash' >> RELEASE_NOTES.md
           echo "# Download the binary for your platform" >> RELEASE_NOTES.md
-          echo "curl -LO https://github.com/alvarorichard/Goanime/releases/download/${VERSION}/goanime-linux-amd64.tar.gz" >> RELEASE_NOTES.md
+          echo "curl -LO https://github.com/Jaimedsf/goanime-gui/releases/download/${VERSION}/goanime-linux-amd64.tar.gz" >> RELEASE_NOTES.md
           echo "" >> RELEASE_NOTES.md
           echo "# Extract and install" >> RELEASE_NOTES.md
           echo "tar -xzf goanime-linux-amd64.tar.gz" >> RELEASE_NOTES.md

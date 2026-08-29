@@ -20,21 +20,16 @@ project.
 ### Branch Structure
 
 - **`main`**: Production-ready code. This branch should always be stable and deployable.
-- **`dev`**: Development branch where all features are integrated before merging
-  to main.
-- **`feature/*`**: Feature branches for new functionality (e.g.,
-  `feature/anime-search`, `feature/discord-integration`).
-- **`bugfix/*`**: Bug fix branches (e.g., `bugfix/player-crash`, `bugfix/episode-loading`).
-- **`hotfix/*`**: Critical fixes that need to go directly to main.
+- **`<type>/<short-description>`**: One branch per change, named after the
+  commit type it carries (e.g. `feat/forget-history-title`,
+  `fix/gosec-findings`, `build/hide-node-modules-from-go`).
 
 ### Important Rules
 
 ⚠️ **NEVER commit directly to the `main` branch!**
 
-- All changes must go through the `dev` branch first
-- Create feature branches from `dev`
-- Merge feature branches back to `dev`
-- Only merge `dev` to `main` after thorough testing
+- Branch from `main`, and open a pull request back into it
+- Keep a branch to one change, so it can be reviewed and reverted on its own
 
 ## Development Workflow
 
@@ -42,11 +37,8 @@ project.
 
 ```bash
 # Clone the repository
-git clone https://github.com/alvarorichard/GoAnime.git
-cd GoAnime
-
-# Switch to dev branch
-git checkout dev
+git clone https://github.com/Jaimedsf/goanime-gui.git
+cd goanime-gui
 
 # Install dependencies (if using Nix)
 nix-shell
@@ -58,29 +50,32 @@ go mod tidy
 ### 2. Creating a New Feature
 
 ```bash
-# Start from the latest dev branch
-git checkout dev
-git pull origin dev
+# Start from the latest main
+git checkout main
+git pull privado main
 
-# Create a new feature branch
-git checkout -b feature/your-feature-name
+# Create a branch named type/short-description
+git checkout -b feat/your-feature-name
 
 # Make your changes...
 # Commit your changes
 git add .
 git commit -m "feat: add your feature description"
 
-# Push to your feature branch
-git push origin feature/your-feature-name
+# Push to your branch
+git push -u privado feat/your-feature-name
 ```
+
+Note the remote: `privado` is this repository. `origin` points at the
+project this was forked from and its push URL is deliberately disabled, so
+a stray `git push origin` fails instead of reaching someone else's repo.
 
 ### 3. Submitting Changes
 
-1. Create a Pull Request from your feature branch to `dev`
+1. Open a Pull Request from your branch to `main`
 2. Ensure all checks pass (tests, linting, formatting)
-3. Request code review from maintainers
-4. Address any feedback
-5. Merge to `dev` after approval
+3. Address any feedback
+4. Merge to `main` after approval
 
 ## Code Standards
 

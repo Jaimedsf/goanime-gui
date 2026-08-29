@@ -255,10 +255,10 @@ MIT License - veja [LICENSE](../LICENSE)
 
 ## 🔗 Links Úteis
 
-- Repositório principal: <https://github.com/alvarorichard/GoAnime>
+- Repositório principal: <https://github.com/Jaimedsf/goanime-gui>
 - Documentação completa: [pkg/goanime/README.md](pkg/goanime/README.md)
 - Exemplos: [pkg/goanime/examples/](pkg/goanime/examples/)
-- Issues: <https://github.com/alvarorichard/GoAnime/issues>
+- Issues: <https://github.com/Jaimedsf/goanime-gui/issues>
 
 ---
 
