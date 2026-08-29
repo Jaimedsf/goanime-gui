@@ -4,27 +4,46 @@ import { clear, els, plural, renderError } from "./dom.js";
 import { setArtwork } from "./cards.js";
 import { searchByTitle } from "./search.js";
 
-export async function loadSchedule({ force = false } = {}) {
+// loadSchedule fills the calendar.
+//
+// `background` is the revalidate half of stale-while-revalidate: the
+// backend serves a stored week instantly even when it is past its TTL, and
+// this then refetches behind the rendered calendar. It must not touch the
+// screen on the way in or on failure — a background run that cleared the
+// week would undo exactly the instant paint it exists to support.
+export async function loadSchedule({ force = false, background = false } = {}) {
   const seq = ++state.scheduleSeq;
   const current = () => seq === state.scheduleSeq;
 
-  if (!state.schedule || force) skeletonWeek();
-  els.scheduleRefresh.disabled = true;
+  if (!background) {
+    if (!state.schedule || force) skeletonWeek();
+    els.scheduleRefresh.disabled = true;
+  }
 
   try {
-    // A forced refresh refetches every page, and the AniList gate spaces
-    // those out, so the ceiling is generous — but it is a ceiling.
+    // A refetch walks every page, and the AniList gate spaces those out, so
+    // the ceiling is generous — but it is a ceiling.
     const week = await withTimeout(
-      force ? app().RefreshSchedule() : app().Schedule(),
+      force || background ? app().RefreshSchedule() : app().Schedule(),
       90000,
       "O calendário"
     );
     if (!current()) return;
     state.schedule = week;
     renderSchedule();
+
+    // A stored week that has aged out is shown first and corrected after.
+    // Only a foreground run starts one, so this cannot chain: the refetch
+    // it triggers always comes back fresh.
+    if (week.stale && !background) loadSchedule({ background: true });
     return true;
   } catch (err) {
     if (!current()) return;
+    if (background) {
+      // The calendar on screen is still the last good one. Keep it.
+      console.warn("background schedule refresh failed", err);
+      return false;
+    }
     console.warn("Schedule() failed", err);
     state.schedule = null;
     els.scheduleCount.textContent = "";
@@ -39,7 +58,7 @@ export async function loadSchedule({ force = false } = {}) {
     // Unconditionally, not only for the current run: a superseded load that
     // left the button disabled was one of the ways the calendar got stuck
     // looking like it was still working.
-    els.scheduleRefresh.disabled = false;
+    if (!background) els.scheduleRefresh.disabled = false;
   }
 }
 

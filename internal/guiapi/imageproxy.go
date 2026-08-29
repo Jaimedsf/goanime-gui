@@ -120,12 +120,10 @@ func serveImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := storeImage(path, data); err != nil {
-		// Serving it uncached is still better than not serving it.
-		writeImageBytes(w, r, data, time.Now())
-		return
-	}
-	writeImageBytes(w, r, data, time.Now())
+	// A write that fails is not worth failing the request over: serving the
+	// image uncached is still serving the image.
+	_ = storeImage(path, data)
+	writeImageBytes(w, r, data, filepath.Base(path))
 }
 
 // parseImageURL validates the requested URL. Only absolute http(s) URLs are
@@ -190,24 +188,41 @@ func serveCachedImage(w http.ResponseWriter, r *http.Request, path string) bool 
 
 	// Touch it so eviction can tell what is still in use: the oldest file
 	// by modification time is the one nothing has asked for in longest.
+	//
+	// That touch is also why this must not serve Last-Modified. The mtime
+	// changes on every hit, so a conditional request could never match and
+	// the webview would re-transfer the whole file each time it revalidated.
+	// The ETag below is the honest validator anyway: the bytes for a URL
+	// never change, so the key identifies the content exactly.
 	now := time.Now()
 	_ = os.Chtimes(path, now, now)
 
-	setImageHeaders(w)
-	// ServeContent sniffs the content type from the first bytes, which is
-	// what we want: nothing on disk records what the CDN claimed.
-	http.ServeContent(w, r, "", info.ModTime(), f)
+	setImageHeaders(w, filepath.Base(path))
+	// A zero modtime keeps ServeContent from emitting Last-Modified; it
+	// still answers If-None-Match from the ETag. It sniffs the content type
+	// from the first bytes, which is what we want: nothing on disk records
+	// what the CDN claimed.
+	http.ServeContent(w, r, "", time.Time{}, f)
 	return true
 }
 
-func writeImageBytes(w http.ResponseWriter, r *http.Request, data []byte, mod time.Time) {
-	setImageHeaders(w)
-	http.ServeContent(w, r, "", mod, bytes.NewReader(data))
+func writeImageBytes(w http.ResponseWriter, r *http.Request, data []byte, etag string) {
+	setImageHeaders(w, etag)
+	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(data))
 }
 
-func setImageHeaders(w http.ResponseWriter) {
+// setImageHeaders marks the response cacheable and gives it a validator.
+//
+// immutable is not a shortcut here, it is the literal truth: the response
+// body is whatever that exact URL returned, keyed by the hash of the URL, so
+// it can never change for this request. That lets the webview reuse it
+// without asking, and get an empty 304 on the rare occasions it does.
+func setImageHeaders(w http.ResponseWriter, etag string) {
 	w.Header().Set("Cache-Control",
-		fmt.Sprintf("private, max-age=%d", int(imgClientCacheAge.Seconds())))
+		fmt.Sprintf("private, max-age=%d, immutable", int(imgClientCacheAge.Seconds())))
+	if etag != "" {
+		w.Header().Set("ETag", `"`+etag+`"`)
+	}
 }
 
 // imgClient refuses to dial anything that is not a public address. The URLs

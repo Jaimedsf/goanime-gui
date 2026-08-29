@@ -1,6 +1,7 @@
 package guiapi
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -302,5 +303,139 @@ func TestLayOutWeekDropsAdultEntries(t *testing.T) {
 	}
 	if len(week.Days[1].Entries) != 1 || week.Days[1].Entries[0].Title != "Safe" {
 		t.Errorf("Tuesday = %v, want only \"Safe\"", week.Days[1].Entries)
+	}
+}
+
+// resetScheduleCaches clears both layers so a test starts from nothing.
+func resetScheduleCaches(t *testing.T) {
+	t.Helper()
+	resetMetaStore(t, filepath.Join(t.TempDir(), "cache.json"))
+	scheduleMu.Lock()
+	scheduleCache = nil
+	scheduleMu.Unlock()
+	t.Cleanup(func() {
+		scheduleMu.Lock()
+		scheduleCache = nil
+		scheduleMu.Unlock()
+	})
+}
+
+// The calendar is the tab that opens first, and refetching it walks eight
+// AniList pages spaced by the rate limiter. A stored week has to be served
+// without any of that, however old it is — only flagged as stale.
+func TestScheduleServesAStoredWeekWithoutFetching(t *testing.T) {
+	resetScheduleCaches(t)
+	start := weekStartFor(time.Now())
+
+	storeWeek(&scheduleSnapshot{
+		start: start,
+		// Well past scheduleTTL, so a TTL-driven implementation would go to
+		// the network — and there is none reachable from a unit test.
+		fetchedAt: time.Now().Add(-24 * time.Hour),
+		entries: []ScheduleEntry{{
+			Title:    "Stored Title",
+			AiringAt: start.Add(30 * time.Hour).Unix(),
+		}},
+	})
+
+	// Drop the in-memory layer so only the file can answer.
+	scheduleMu.Lock()
+	scheduleCache = nil
+	scheduleMu.Unlock()
+
+	week, err := Schedule()
+	if err != nil {
+		t.Fatalf("Schedule() went to the network: %v", err)
+	}
+	if !week.Stale {
+		t.Error("a week older than the TTL should be reported as stale")
+	}
+	if week.Total != 1 {
+		t.Fatalf("total = %d, want the stored entry", week.Total)
+	}
+}
+
+// A fresh week must not ask the frontend to refresh behind it.
+func TestScheduleDoesNotFlagAFreshWeekAsStale(t *testing.T) {
+	resetScheduleCaches(t)
+	start := weekStartFor(time.Now())
+
+	storeWeek(&scheduleSnapshot{
+		start:     start,
+		fetchedAt: time.Now(),
+		entries:   []ScheduleEntry{{Title: "Fresh", AiringAt: start.Add(30 * time.Hour).Unix()}},
+	})
+	scheduleMu.Lock()
+	scheduleCache = nil
+	scheduleMu.Unlock()
+
+	week, err := Schedule()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if week.Stale {
+		t.Error("a week inside the TTL was flagged stale")
+	}
+}
+
+// The adult flag is unexported on ScheduleEntry, so it only survives the
+// file if it is written down deliberately. Losing it would put adult titles
+// back on the calendar after a restart.
+func TestStoredWeekKeepsTheAdultFlagAndMatchKeys(t *testing.T) {
+	resetScheduleCaches(t)
+	start := weekStartFor(time.Now())
+	at := start.Add(30 * time.Hour).Unix()
+
+	storeWeek(&scheduleSnapshot{
+		start:     start,
+		fetchedAt: time.Now(),
+		entries: []ScheduleEntry{
+			{Title: "Adult Title", AiringAt: at, adult: true},
+			{Title: "Safe Title", AiringAt: at, matchKeys: []string{"safe title"}},
+		},
+	})
+	scheduleMu.Lock()
+	scheduleCache = nil
+	scheduleMu.Unlock()
+
+	snap := cachedWeek(start)
+	if snap == nil {
+		t.Fatal("the stored week did not come back")
+	}
+	if len(snap.entries) != 2 {
+		t.Fatalf("%d entries came back, want 2", len(snap.entries))
+	}
+	if !snap.entries[0].adult {
+		t.Error("the adult flag was lost, so an adult title would be shown")
+	}
+	if len(snap.entries[1].matchKeys) != 1 || snap.entries[1].matchKeys[0] != "safe title" {
+		t.Errorf("matchKeys = %v; favorites would stop being marked", snap.entries[1].matchKeys)
+	}
+
+	// And the adult one must still be dropped on the way out.
+	week := layOutWeek(snap, start)
+	if week.Total != 1 {
+		t.Errorf("total = %d, want the adult entry left out", week.Total)
+	}
+}
+
+// Last week's calendar is not this week's. It must be discarded rather than
+// shown as if it were current.
+func TestStoredWeekFromAnotherWeekIsNotUsed(t *testing.T) {
+	resetScheduleCaches(t)
+	thisWeek := weekStartFor(time.Now())
+	lastWeek := thisWeek.AddDate(0, 0, -7)
+
+	storeWeek(&scheduleSnapshot{
+		start:     lastWeek,
+		fetchedAt: time.Now(),
+		entries:   []ScheduleEntry{{Title: "Old", AiringAt: lastWeek.Add(30 * time.Hour).Unix()}},
+	})
+	scheduleMu.Lock()
+	scheduleCache = nil
+	scheduleMu.Unlock()
+
+	if snap := cachedWeek(thisWeek); snap != nil {
+		t.Error("a snapshot from another week was served as this week")
 	}
 }

@@ -113,22 +113,43 @@ func (e cachedCover) expired(now time.Time) bool {
 	return now.Sub(e.FetchedAt) > e.ttl()
 }
 
+// cachedScheduleEntry is one airing, with the two fields ScheduleEntry keeps
+// unexported. They have to be written down explicitly: adult decides whether
+// the entry is shown at all, so a snapshot that lost it would put adult
+// titles back on the calendar, and matchKeys is what recognises a favorite.
+type cachedScheduleEntry struct {
+	Entry     ScheduleEntry `json:"entry"`
+	Adult     bool          `json:"adult,omitempty"`
+	MatchKeys []string      `json:"matchKeys,omitempty"`
+}
+
+// cachedSchedule is one fetched week. Only the current one is kept: a
+// snapshot for a week that has already rolled over is of no use to anyone.
+type cachedSchedule struct {
+	Start     time.Time             `json:"start"`
+	FetchedAt time.Time             `json:"fetchedAt"`
+	Partial   bool                  `json:"partial"`
+	Entries   []cachedScheduleEntry `json:"entries"`
+}
+
 // metaFile is the on-disk shape.
 type metaFile struct {
-	Version int                    `json:"version"`
-	Media   map[string]cachedMedia `json:"media,omitempty"`
-	Covers  map[string]cachedCover `json:"covers,omitempty"`
+	Version  int                    `json:"version"`
+	Media    map[string]cachedMedia `json:"media,omitempty"`
+	Covers   map[string]cachedCover `json:"covers,omitempty"`
+	Schedule *cachedSchedule        `json:"schedule,omitempty"`
 }
 
 // metaStore holds both maps and owns the file. Reads are frequent and
 // cheap; the network call they spare is not. So a plain mutex is enough,
 // and it is never held across a call to AniList.
 type metaStore struct {
-	mu     sync.Mutex
-	loaded bool
-	flush  *time.Timer
-	media  map[string]cachedMedia
-	covers map[string]cachedCover
+	mu       sync.Mutex
+	loaded   bool
+	flush    *time.Timer
+	media    map[string]cachedMedia
+	covers   map[string]cachedCover
+	schedule *cachedSchedule
 }
 
 var metaCache = &metaStore{}
@@ -160,6 +181,7 @@ func (s *metaStore) ensureLoadedLocked() {
 	s.loaded = true
 	s.media = map[string]cachedMedia{}
 	s.covers = map[string]cachedCover{}
+	s.schedule = nil
 
 	data, err := os.ReadFile(metaCachePath())
 	if err != nil {
@@ -169,6 +191,7 @@ func (s *metaStore) ensureLoadedLocked() {
 	if err := json.Unmarshal(data, &parsed); err != nil || parsed.Version != metaCacheVersion {
 		return
 	}
+	s.schedule = parsed.Schedule
 
 	// Drop what has already aged out, rather than carrying it in memory
 	// until something happens to ask for it.
@@ -205,9 +228,10 @@ func (s *metaStore) saveLocked() error {
 
 	now := time.Now()
 	out := metaFile{
-		Version: metaCacheVersion,
-		Media:   map[string]cachedMedia{},
-		Covers:  map[string]cachedCover{},
+		Version:  metaCacheVersion,
+		Media:    map[string]cachedMedia{},
+		Covers:   map[string]cachedCover{},
+		Schedule: s.schedule,
 	}
 	for k, e := range s.media {
 		if e.transient || e.expired(now) {
@@ -340,6 +364,26 @@ func metaCachePutCover(key, url string, transient bool) {
 	if !transient {
 		metaCache.markDirtyLocked()
 	}
+}
+
+// metaCacheSchedule returns the stored week, whatever its age. Freshness is
+// the caller's decision here: a week that is merely stale is still worth
+// painting immediately while a refresh runs behind it, which is the whole
+// point of keeping it.
+func metaCacheSchedule() *cachedSchedule {
+	metaCache.mu.Lock()
+	defer metaCache.mu.Unlock()
+	metaCache.ensureLoadedLocked()
+	return metaCache.schedule
+}
+
+func metaCachePutSchedule(s *cachedSchedule) {
+	metaCache.mu.Lock()
+	defer metaCache.mu.Unlock()
+	metaCache.ensureLoadedLocked()
+
+	metaCache.schedule = s
+	metaCache.markDirtyLocked()
 }
 
 // copyThumbs returns a private copy of an entry's thumbnail map, so a

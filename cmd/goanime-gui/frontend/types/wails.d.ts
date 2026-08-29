@@ -147,6 +147,8 @@ interface WeekSchedule {
   favoriteTotal: number;
   fetchedAt: GoTime;
   partial: boolean;
+  /** Served from the cache past its TTL; refresh behind it. */
+  stale: boolean;
 }
 
 interface GateStatus {
