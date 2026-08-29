@@ -3,6 +3,7 @@ package guiapi
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,13 @@ import (
 	"sync"
 	"time"
 )
+
+// errAniListNotFound is AniList's 404. For a Media query it means "there is
+// no such title", which is an answer — not a failure — and the one case a
+// caller may cache negatively: everything else (timeouts, 5xx, a broken
+// connection) could succeed on the next try and must not be remembered as
+// "this title does not exist".
+var errAniListNotFound = errors.New("o AniList não encontrou esse título")
 
 // The catalog comes from AniList rather than from the scrapers: none of the
 // sources expose a "what aired in Spring 2024" endpoint, and AniList is the
@@ -700,6 +708,10 @@ func anilistTry(body []byte, out any) (time.Duration, error) {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return retryAfterDelay(resp.Header.Get("Retry-After")),
 			fmt.Errorf("o AniList pediu para esperar um pouco; tente de novo em alguns segundos")
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return 0, errAniListNotFound
 	}
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, resp.Body)

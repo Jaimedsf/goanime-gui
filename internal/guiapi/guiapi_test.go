@@ -538,8 +538,8 @@ func TestSuperFlixWithoutTMDBIDFails(t *testing.T) {
 func seedAdultCache(t *testing.T, title string, adult bool) {
 	t.Helper()
 	key := strings.ToLower(normalizeTitle(title))
-	mediaCache.Store(key, &aniListMedia{adult: adult})
-	t.Cleanup(func() { mediaCache.Delete(key) })
+	metaCachePutMedia(key, cachedMedia{Adult: adult})
+	t.Cleanup(func() { metaCacheForget(t, key) })
 }
 
 func TestDropAdultRemovesFlaggedTitles(t *testing.T) {
@@ -568,10 +568,10 @@ func TestDropAdultOnAnEmptyListIsANoOp(t *testing.T) {
 // unknown would silently drop ordinary results the user searched for.
 func TestDropAdultShowsTitlesItCannotClassify(t *testing.T) {
 	seedAdultCache(t, "Unresolvable Scraper Title", false)
-	// Stored as nil, the shape lookupAniList caches for "AniList had nothing".
+	// Missing is the shape lookupAniList caches for "AniList had nothing".
 	key := strings.ToLower(normalizeTitle("Nil Cached Title"))
-	mediaCache.Store(key, (*aniListMedia)(nil))
-	t.Cleanup(func() { mediaCache.Delete(key) })
+	metaCachePutMedia(key, cachedMedia{Missing: true})
+	t.Cleanup(func() { metaCacheForget(t, key) })
 
 	in := []SearchResult{{Name: "Unresolvable Scraper Title"}, {Name: "Nil Cached Title"}}
 	got := dropAdult(append([]SearchResult(nil), in...))
