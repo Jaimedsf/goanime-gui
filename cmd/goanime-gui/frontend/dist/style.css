@@ -49,6 +49,17 @@ body {
   color: var(--fg);
 }
 
+/* The window is the frame, not the page: a header row on top and one
+   scrolling column under it. Letting the whole document scroll instead is
+   what left the calendar with no idea how much height it had — it could
+   only guess at a fraction of the viewport, and be wrong on every window
+   that was not the size the fraction was picked for. */
+body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
@@ -63,9 +74,10 @@ header {
   display: flex;
   align-items: center;
   gap: 16px;
-  position: sticky;
-  top: 0;
-  z-index: 10;
+  /* The header is a row of the window rather than the top of the page, so
+     it stays in view without `position: sticky` — the scrolling happens
+     below it, inside <main>. */
+  flex: none;
   /* Brand, tabs, search and the two chips fit on one line at the 1200px
      default with a handful of pixels to spare. Rather than let a narrower
      window squeeze the search box down to nothing, the row wraps: the
@@ -190,8 +202,26 @@ main {
   /* Narrow side padding and a high ceiling: the width bought here is what
      lets the calendar hold another day column before it wraps. */
   padding: 18px 16px 48px;
+  width: 100%;
   max-width: 1760px;
   margin: 0 auto;
+  /* The content column scrolls, not the window. That gives everything
+     below the header a height it can measure against, which is what lets
+     a pane size itself to the window instead of running off the bottom of
+     it. `min-height: 0` because a flex item will not shrink below its
+     content without it. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Panes keep their natural height and let <main> scroll past them; only
+   the calendar opts into filling the window. Without this a long catalog
+   would be squeezed by the flex column instead of scrolling. */
+main > * {
+  flex: none;
 }
 
 .status {
@@ -1158,10 +1188,24 @@ li:hover .card-remove,
 
 /* ---------- weekly airing calendar ---------- */
 
-/* Seven columns, Monday to Sunday. They never wrap: a wrapped week reads as
-   two rows of unrelated days and loses the left-to-right sense of time.
-   `minmax(0, 1fr)` lets them shrink to fit the window, so the common case has
-   no horizontal scrollbar at all. */
+/* The calendar is the one pane shaped by the window in both directions:
+   it fills the height it is given and hands that height down to the day
+   columns, so shortening the window shortens the columns instead of
+   pushing the last day below the fold. */
+#schedule-pane:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* The heading and the filter row keep their height; the week is the one
+   that gives way when the window is short. */
+#schedule-pane > .pane-head,
+#schedule-pane > .toolbar {
+  flex: none;
+}
+
 /* The week reflows rather than scrolling sideways.
 
    Seven columns while they fit, fewer when they do not: the days stay in
@@ -1176,10 +1220,23 @@ li:hover .card-remove,
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 10px;
+  /* Grow with the week, stop at the window. Not growing is half the rule:
+     a week filtered down to three favorites should be three short columns,
+     not seven window-high empty boxes. Shrinking is the other half — when
+     the days hold more than fits, the week takes the height that is left
+     and the columns scroll inside it instead of running off the bottom of
+     the window. */
+  flex: 0 1 auto;
+  min-height: 0;
+  /* A row takes the height it is given, down to a floor of 240px: a week
+     that has wrapped keeps two readable rows and lets <main> scroll to the
+     second, rather than halving itself into two rows of one episode. */
+  grid-auto-rows: minmax(240px, 1fr);
 }
 
 .day {
   background: var(--bg-elevated);
+  min-height: 0;
   border: 1px solid var(--border);
   border-radius: 12px;
   display: flex;
@@ -1235,14 +1292,24 @@ li:hover .card-remove,
   display: flex;
   flex-direction: column;
   gap: 4px;
-  /* Tied to the window rather than fixed: on a short screen a 430px column
-     pushed everything else off the page, and on a tall one it wasted the
-     room it had. */
-  max-height: clamp(320px, 46vh, 520px);
+  /* The height comes from the column, not from a fraction of the viewport:
+     the list takes whatever the week grid hands it and scrolls inside
+     that. A short window gives shorter columns rather than a calendar that
+     runs off the bottom; a tall one shows more of each day rather than
+     stopping at a fixed ceiling. The row floor in .week is what keeps a
+     column readable once the window gets short. */
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
 }
 
 .day-empty {
+  /* The column is as tall as its busiest neighbour, so the note sits in
+     the middle of it rather than clinging to the header. */
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 18px 10px;
   text-align: center;
   font-size: 12px;
