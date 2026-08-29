@@ -187,8 +187,8 @@ header h1 {
 /* ---------- layout ---------- */
 
 main {
-  /* Narrow side padding and a high ceiling: the calendar is seven columns
-     wide, and every pixel spent on margins is a pixel it has to scroll. */
+  /* Narrow side padding and a high ceiling: the width bought here is what
+     lets the calendar hold another day column before it wraps. */
   padding: 18px 16px 48px;
   max-width: 1760px;
   margin: 0 auto;
@@ -1162,20 +1162,20 @@ li:hover .card-remove,
    two rows of unrelated days and loses the left-to-right sense of time.
    `minmax(0, 1fr)` lets them shrink to fit the window, so the common case has
    no horizontal scrollbar at all. */
+/* The week reflows rather than scrolling sideways.
+
+   Seven columns while they fit, fewer when they do not: the days stay in
+   order, so a week on two rows still reads left to right. Forcing seven
+   across meant either columns too narrow to hold a title or a horizontal
+   scrollbar that hid Sunday behind the edge of the window — and a day you
+   have to scroll to find is a day you do not look at.
+
+   200px is the floor because that is what a 56px cover plus a readable
+   title needs; below it the grid drops a column instead of squeezing. */
 .week {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
   gap: 10px;
-}
-
-/* Past the point where seven columns stop being readable, scrolling is the
-   lesser evil — a 90px column fits nothing. */
-@media (max-width: 1080px) {
-  .week {
-    grid-template-columns: repeat(7, minmax(168px, 1fr));
-    overflow-x: auto;
-    padding-bottom: 8px;
-  }
 }
 
 .day {
@@ -1234,8 +1234,11 @@ li:hover .card-remove,
   padding: 5px;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  max-height: 430px;
+  gap: 4px;
+  /* Tied to the window rather than fixed: on a short screen a 430px column
+     pushed everything else off the page, and on a tall one it wasted the
+     room it had. */
+  max-height: clamp(320px, 46vh, 520px);
   overflow-y: auto;
 }
 
@@ -1249,10 +1252,10 @@ li:hover .card-remove,
 .airing {
   width: 100%;
   display: grid;
-  grid-template-columns: 34px 1fr;
-  gap: 8px;
+  grid-template-columns: 56px 1fr;
+  gap: 10px;
   align-items: center;
-  padding: 6px 7px;
+  padding: 7px 8px;
   border: 1px solid transparent;
   border-left: 3px solid transparent;
   border-radius: 8px;
@@ -1299,9 +1302,12 @@ li:hover .card-remove,
   font-weight: 400;
 }
 
+/* A cover at 34px was a smudge. 56px keeps the 2:3 poster ratio and is
+   large enough to recognise a title by its artwork, which is how anyone
+   actually scans a calendar. */
 .airing-thumb {
-  width: 34px;
-  height: 48px;
+  width: 56px;
+  height: 80px;
   object-fit: cover;
   border-radius: 4px;
   background: var(--bg);
@@ -1312,8 +1318,8 @@ li:hover .card-remove,
 }
 
 .airing-title {
-  font-size: 12px;
-  line-height: 1.3;
+  font-size: 13px;
+  line-height: 1.35;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   line-clamp: 2;
@@ -1352,7 +1358,7 @@ li:hover .card-remove,
 }
 
 .day-list .skeleton-box {
-  height: 44px;
+  height: 94px;
   border-radius: 8px;
   flex: none;
 }
@@ -1446,5 +1452,5 @@ li:hover .card-remove,
 }
 
 .art-fallback.airing-thumb {
-  font-size: 15px;
+  font-size: 22px;
 }
