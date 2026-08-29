@@ -10,6 +10,10 @@
   --danger: #f7768e;
   --warn: #e0af68;
   --ok: #9ece6a;
+  /* A thumb of its own rather than --border: the border colour disappears
+     against the elevated panels the scrollbars sit in. */
+  --scrollbar-thumb: #333a49;
+  --scrollbar-thumb-hover: #4a5468;
   --radius: 10px;
 }
 
@@ -28,6 +32,8 @@
     --danger: #c1344e;
     --warn: #9a6b12;
     --ok: #3f7d20;
+    --scrollbar-thumb: #c6cad4;
+    --scrollbar-thumb-hover: #a8aeba;
   }
 }
 
@@ -63,6 +69,50 @@ body {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* ---------- scrollbars ---------- */
+
+/* Tell the engine which palette the page is in. Without it the webview
+   paints every native widget — scrollbars first among them — in the light
+   theme, which is where the white bars down the side of a dark calendar
+   came from. It also carries the <select> dropdowns and the checkboxes,
+   which had the same split. */
+:root {
+  color-scheme: light dark;
+  /* Both properties are inherited, so this is the whole page: a thin bar
+     with a thumb from the palette and no track, which reads as part of the
+     panel it sits in rather than a strip laid over it. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+/* The same bar for a WebView2 older than the standard properties, which
+   Chromium only learned in 121. A newer runtime ignores these in favour of
+   the two lines above — including the hover brighten, which the standard
+   properties have no way to express — and an older one has them and
+   nothing else. The 2px transparent border is what insets the thumb, since
+   a scrollbar has no padding. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+  background-clip: padding-box;
 }
 
 /* ---------- header ---------- */
