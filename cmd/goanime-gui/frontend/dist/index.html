@@ -10,50 +10,12 @@
     <header>
       <button type="button" id="home-btn" class="brand" title="Início">GoAnime</button>
 
-      <form id="search-form" role="search">
-        <div class="input-wrap">
-          <input
-            id="query"
-            type="text"
-            placeholder="Buscar anime, filme ou série…"
-            autocomplete="off"
-            list="search-history"
-            aria-label="Termo de busca"
-            required
-          />
-          <datalist id="search-history"></datalist>
-          <kbd class="hint">Ctrl K</kbd>
-        </div>
-
-        <select id="source" aria-label="Fonte">
-          <option value="all">Todas as fontes</option>
-        </select>
-
-        <button type="submit" id="search-btn">Buscar</button>
-        <button type="button" id="cancel-btn" class="ghost" hidden>Cancelar</button>
-      </form>
-
-      <button type="button" id="downloads-chip" class="chip" title="Downloads">
-        <span class="chip-label">Downloads</span>
-        <span class="chip-value" id="downloads-count">0</span>
-      </button>
-
-      <button
-        type="button"
-        id="player-chip"
-        class="chip"
-        title="Trocar o player usado na reprodução"
-      >
-        <span class="chip-label">Player</span>
-        <span class="chip-value" id="player-name">mpv</span>
-      </button>
-    </header>
-
-    <main>
-      <!-- The sections are tabs rather than one long scroll. Beyond
-           being easier to navigate, only the active tab loads: AniList is
-           rate-limited, and fetching the calendar, the catalog and every
-           favorite's artwork at once is what used to trip its limit. -->
+      <!-- The sections live in the header rather than above the content:
+           the row they used to occupy cost ~58px of vertical space on every
+           screen, and the calendar is seven columns tall. They are tabs
+           rather than one long scroll because only the active tab loads —
+           AniList is rate-limited, and fetching the calendar, the catalog
+           and every favorite's artwork at once is what used to trip it. -->
       <nav id="tabs" class="tabs" role="tablist" aria-label="Seções">
         <button
           type="button"
@@ -103,6 +65,46 @@
         </button>
       </nav>
 
+      <form id="search-form" role="search">
+        <div class="input-wrap">
+          <input
+            id="query"
+            type="text"
+            placeholder="Buscar anime, filme ou série…"
+            autocomplete="off"
+            list="search-history"
+            aria-label="Termo de busca"
+            required
+          />
+          <datalist id="search-history"></datalist>
+          <kbd class="hint">Ctrl K</kbd>
+        </div>
+
+        <select id="source" aria-label="Fonte">
+          <option value="all">Todas as fontes</option>
+        </select>
+
+        <button type="submit" id="search-btn">Buscar</button>
+        <button type="button" id="cancel-btn" class="ghost" hidden>Cancelar</button>
+      </form>
+
+      <button type="button" id="downloads-chip" class="chip" title="Downloads">
+        <span class="chip-label">Downloads</span>
+        <span class="chip-value" id="downloads-count">0</span>
+      </button>
+
+      <button
+        type="button"
+        id="player-chip"
+        class="chip"
+        title="Trocar o player usado na reprodução"
+      >
+        <span class="chip-label">Player</span>
+        <span class="chip-value" id="player-name">mpv</span>
+      </button>
+    </header>
+
+    <main>
       <div id="status" class="status" role="status" aria-live="polite"></div>
 
       <!-- Weekly calendar: what airs on which day, favorites highlighted.
