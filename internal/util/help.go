@@ -202,7 +202,7 @@ func ShowBeautifulHelp() {
 	// Footer
 	helpContent.WriteString(separatorStyle.Render(strings.Repeat("─", 80)))
 	helpContent.WriteString("\n")
-	helpContent.WriteString(subtitleStyle.Render("For more information, visit: https://github.com/alvarorichard/GoAnime"))
+	helpContent.WriteString(subtitleStyle.Render("For more information, visit: https://github.com/Jaimedsf/goanime-gui"))
 	helpContent.WriteString("\n")
 	helpContent.WriteString(subtitleStyle.Render("Made with love for anime lovers everywhere"))
 	helpContent.WriteString("\n\n")

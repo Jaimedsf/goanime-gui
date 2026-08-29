@@ -1,188 +1,117 @@
-<h4 align="center">
-    <p>
-        <b>English</b> |
-        <a href="https://github.com/alvarorichard/GoAnime/blob/main/README_pt-br.md">Рortuguês</a>
-    </p>
-</h4>
-
 <p align="center">
-  <img src="https://github.com/alvarorichard/GoAnime/assets/102667323/49600255-d5a2-4405-81d1-a08cebae569a" alt="GoAnime Logo" />
-</p>
-
-<p align="center">
-    <a href="alvarorichard/GoAnime/blob/master/LICENSE"><img src="https://img.shields.io/github/license/alvarorichard/GoAnime" alt="GitHub license"></a>
-    <img src="https://img.shields.io/github/stars/alvarorichard/GoAnime" alt="GitHub stars">
-    <img src="https://img.shields.io/github/last-commit/alvarorichard/GoAnime" alt="GitHub last commit">
-    <img src="https://img.shields.io/github/forks/alvarorichard/GoAnime?style=social" alt="GitHub forks">
-    <a href="https://github.com/alvarorichard/GoAnime/actions"><img src="https://github.com/alvarorichard/GoAnime/actions/workflows/ci.yml/badge.svg" alt="Build Status"></a>
-    <img src="https://img.shields.io/github/contributors/alvarorichard/GoAnime" alt="GitHub contributors">
-    <a href="https://discord.gg/FbQuf78D9G"><img src="https://img.shields.io/badge/Discord-Community-7289DA?logo=discord&logoColor=white" alt="Discord"></a>
+    <a href="https://github.com/Jaimedsf/goanime-gui/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Jaimedsf/goanime-gui" alt="Licença"></a>
+    <img src="https://img.shields.io/github/last-commit/Jaimedsf/goanime-gui" alt="Último commit">
+    <img src="https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white" alt="Go 1.27">
 </p>
 
 # GoAnime
 
-GoAnime is a simple text-based user interface (TUI) built in Go, allowing users
-to search for anime and either play or download episodes directly in mpv. It
-scrapes data from websites to provide a selection of anime and episodes, with
-support for both subbed and dubbed content in English and Portuguese.
+O GoAnime permite procurar animes, filmes e séries e reproduzir ou baixar
+episódios direto no mpv. Ele coleta dados de várias fontes para oferecer
+conteúdo legendado e dublado em inglês e português.
 
-## Table of contents
+São dois aplicativos sobre a mesma base:
 
-1.  [Features](#features)
-2.  [Prerequisites](#prerequisites)
-3.  [Installation](#installation)
-4.  [How to use](#how-to-use)
-5.  [Advanced usage](#advanced-usage)
-6.  [Community and mobile](#community-and-mobile)
-7.  [Contributing](#contributing)
+*   **`goanime`** — interface de texto (TUI) para o terminal.
+*   **`goanime-gui`** — aplicativo desktop (Wails), com catálogo, calendário
+    semanal de lançamentos, favoritos e histórico.
 
-## Features
+## Índice
 
-*   Search for anime, movies, and TV shows by name
-*   Simultaneous multi-source searching by default across all active platforms
-*   Support for subbed and dubbed content in English and Portuguese
-*   Play online with quality selection or download episodes
-*   Discord RPC integration to show what you're watching
-*   Progress tracking: Resume playback and track watched episodes
+1.  [Recursos](#recursos)
+2.  [Pré-requisitos](#pré-requisitos)
+3.  [Compilando](#compilando)
+4.  [Como usar](#como-usar)
+5.  [Uso avançado](#uso-avançado)
+6.  [Contribuindo](#contribuindo)
 
-*   Built-in upscaling (Anime4K) for better video quality
+## Recursos
 
-## Prerequisites
+*   Busca de animes, filmes e séries por nome
+*   Pesquisa simultânea em todas as fontes ativas por padrão
+*   Suporte a conteúdo legendado e dublado em inglês e português
+*   Reprodução online com qualidade selecionável (1080p, 720p, etc.)
+*   Download único ou em lote de múltiplos episódios
+*   Integração com Discord RPC
+*   Rastreamento de progresso (retomar reprodução e salvar histórico no SQLite)
+*   Upscaling integrado (Anime4K) para melhorar a qualidade de vídeo
+*   Cache local de capas, miniaturas e metadados, para o aplicativo abrir sem
+    rebaixar tudo de novo — e funcionar sem rede
 
-Before installing GoAnime, ensure you have the following dependency installed:
-*   [mpv](https://mpv.io/) (Media player, latest version recommended)
+## Pré-requisitos
 
-## Installation
+*   [mpv](https://mpv.io/) — reprodutor de mídia, versão atualizada
+*   [Go](https://go.dev/dl/) 1.27 ou superior, para compilar
 
-Choose the installation method that best fits your system.
+No Windows, o `mpv` precisa estar no `PATH` do sistema.
 
-### Universal installation
+## Compilando
 
-If you have Go installed on your system, you can install GoAnime via `go install`:
-
-```bash
-go install github.com/alvarorichard/Goanime/cmd/goanime@latest
-```
-
-### macOS
-
-Install `mpv` using Homebrew, then download and configure GoAnime:
+Este repositório não publica binários prontos, então a instalação é a partir
+do código:
 
 ```bash
-brew install mpv
-
-curl -Lo goanime https://github.com/alvarorichard/GoAnime/releases/latest/download/goanime-apple-darwin
-chmod +x goanime
-sudo mv goanime /usr/local/bin/
-
-sudo xattr -d com.apple.quarantine /usr/local/bin/goanime
+git clone https://github.com/Jaimedsf/goanime-gui.git
+cd goanime-gui
 ```
 
-### Linux
-
-<details>
-<summary><b>Debian / Ubuntu (and derivatives)</b></summary>
+### Aplicativo de terminal
 
 ```bash
-sudo apt update
-sudo apt install mpv -y
-
-curl -LO https://github.com/alvarorichard/Goanime/releases/latest/download/goanime-linux-amd64.tar.gz
-tar -xzf goanime-linux-amd64.tar.gz
-chmod +x goanime-linux-amd64
-sudo mv goanime-linux-amd64 /usr/local/bin/goanime
+go build -o goanime ./cmd/goanime
 ```
-</details>
 
-<details>
-<summary><b>Arch Linux / Manjaro (AUR)</b></summary>
+### Aplicativo desktop
+
+O frontend são módulos ES escritos à mão, embutidos no binário — não há
+bundler nem etapa de build de JavaScript:
 
 ```bash
-yay -S goanime
+go build -o goanime-gui ./cmd/goanime-gui
 ```
-</details>
 
-<details>
-<summary><b>Fedora</b></summary>
+Os scripts em [`build/`](build/) cobrem os empacotamentos por sistema
+operacional (`buildlinux.sh`, `buildmacos.sh`, `buildwindows.ps1`).
 
-```bash
-sudo dnf update
-sudo dnf install mpv
+## Como usar
 
-curl -LO https://github.com/alvarorichard/Goanime/releases/latest/download/goanime-linux-amd64.tar.gz
-tar -xzf goanime-linux-amd64.tar.gz
-chmod +x goanime-linux-amd64
-sudo mv goanime-linux-amd64 /usr/local/bin/goanime
-```
-</details>
+1.  **Abra o terminal.**
+2.  **Inicie o aplicativo:** digite `goanime` e aperte `Enter`.
+3.  **Pesquise:** escreva o nome do anime que deseja assistir.
+4.  **Selecione:** navegue pela lista de resultados com as setas do teclado e
+    aperte `Enter` para prosseguir.
+5.  **Assista:** escolha o episódio, defina a qualidade e o vídeo será
+    executado imediatamente no `mpv`.
 
-### Windows
+No aplicativo desktop, basta abrir o `goanime-gui` e usar a busca ou o
+catálogo.
 
-**Strongly Recommended:** Use our installer for the best experience.
+## Uso avançado
 
-1.  Download and run the [GoAnime Windows Installer](https://github.com/alvarorichard/GoAnime/releases/latest).
-2.  Install `mpv` for Windows and ensure it is available in your system's path.
+### Busca direta
 
-## How to use
-
-Follow these steps for a simple, interactive watching experience:
-
-1.  **Open your terminal.**
-2.  **Start the app:** Type `goanime` and press `Enter`.
-3.  **Search:** Provide the name of the anime you want to watch.
-4.  **Select:** Navigate the resulting list using your arrow keys and press 
-    `Enter` to pick an anime.
-5.  **Watch:** Select an episode, choose your preferred streaming quality, and 
-    the video will automatically launch in `mpv`.
-
-## Advanced usage
-
-### Direct search
-
-To bypass the initial prompt, directly pass the anime name:
+Para pesquisar direto da linha de comando, informe um título:
 
 ```bash
 goanime "Naruto"
 ```
 
-
-
-### Updating the app
-
-Keep GoAnime updated to the newest features without manual downloads:
-
-```bash
-goanime --update
-```
-
-### Help
-
-To view all available commands and flags:
+### Menu de ajuda
 
 ```bash
 goanime -h
 ```
 
-## Community and mobile
+## Contribuindo
 
-Join our Discord for support, feedback, and updates:
-[Join the Discord server](https://discord.gg/6nZ2SYv3)
+Antes de iniciar qualquer trabalho, leia o
+[Guia de desenvolvimento](docs/Development.md).
 
-A mobile version of GoAnime is also available for Android devices:
-[GoAnime Mobile](https://github.com/alvarorichard/goanime-mobile)
+Início rápido:
 
-## Contributing
-
-Contributions to improve or enhance are always welcome.
-
-See the [development guide](docs/Development.md).
-
-Quick start:
-1.  Fork the project and read the development guide.
-2.  Create your feature branch from `dev` (`git checkout -b feature/foo`).
-3.  Follow formatting standards (`go fmt`).
-4.  Commit your changes (`git commit -m 'feat: add foo'`).
-5.  Push to the branch (`git push origin feature/foo`).
-6.  Open a pull request to the `dev` branch.
-
-All changes must go through the `dev` branch first.
+1.  Crie sua branch a partir de `main`, no formato `tipo/descrição-curta`
+    (`git checkout -b feat/minha-mudanca`).
+2.  Padronize o código com `go fmt` e rode `npm run check` ao mexer no
+    frontend.
+3.  Faça commits no formato Conventional Commits.
+4.  Abra um pull request apontando para `main`.

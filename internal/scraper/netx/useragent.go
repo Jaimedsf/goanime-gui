@@ -17,4 +17,4 @@ const UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/201
 // Requests using it must also travel on a PLAIN net/http client: the shared surf
 // clients impersonate Chrome and overwrite the User-Agent, so no header the
 // caller sets can survive them.
-const APIUserAgent = "GoAnime/1.0 (+https://github.com/alvarorichard/GoAnime)"
+const APIUserAgent = "GoAnime/1.0 (+https://github.com/Jaimedsf/goanime-gui)"
