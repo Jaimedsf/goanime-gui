@@ -66,6 +66,11 @@ header {
   position: sticky;
   top: 0;
   z-index: 10;
+  /* Brand, tabs, search and the two chips fit on one line at the 1200px
+     default with a handful of pixels to spare. Rather than let a narrower
+     window squeeze the search box down to nothing, the row wraps: the
+     search drops to a second line and everything stays usable. */
+  flex-wrap: wrap;
 }
 
 header h1 {
@@ -79,8 +84,11 @@ header h1 {
 #search-form {
   display: flex;
   gap: 8px;
-  flex: 1;
-  min-width: 0;
+  /* A basis rather than 0: the search has a size it needs to be usable, and
+     stating it is what makes the header wrap instead of shrinking the input
+     to a sliver once the tabs are on the same line. */
+  flex: 1 1 380px;
+  min-width: 300px;
 }
 
 .input-wrap {
@@ -1351,13 +1359,18 @@ li:hover .card-remove,
 
 /* ---------- tabs ---------- */
 
+/* The tabs sit in the header, between the brand and the search. They no
+   longer carry a rule of their own: the header already has a bottom border,
+   and a second line inside it read as a stray divider. */
 .tabs {
   display: flex;
   gap: 2px;
-  border-bottom: 1px solid var(--border);
-  margin: -4px 0 18px;
+  /* Give way before the search does. At 1200px everything fits with a few
+     pixels to spare, so this only matters once the window is narrowed —
+     and a search box too small to read is worse than tabs that scroll. */
+  min-width: 0;
   /* The tabs scroll sideways only if they ever stop fitting, and the
-     scrollbar itself is hidden — five tabs do not need one, and setting
+     scrollbar itself is hidden — four tabs do not need one, and setting
      overflow on one axis makes the other compute to `auto`, which is what
      put a stray vertical scrollbar on the bar. */
   overflow-x: auto;
