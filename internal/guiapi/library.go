@@ -126,6 +126,7 @@ func episodeKeyOf(h HistoryEntry) string {
 // Favorites returns the bookmarked titles, most recently added first.
 func Favorites() []FavoriteItem {
 	ensureMigration()
+	ensureLibraryRepair()
 	favs, err := storage.Default().ListFavorites(context.Background())
 	if err != nil {
 		return []FavoriteItem{}
@@ -213,6 +214,7 @@ func TitleKey(r SearchResult) string {
 // History returns watch entries, most recent first.
 func History() []HistoryEntry {
 	ensureMigration()
+	ensureLibraryRepair()
 	entries, err := storage.Default().GetAllHistory(context.Background(), historyLimit)
 	if err != nil {
 		return []HistoryEntry{}
@@ -240,6 +242,7 @@ func History() []HistoryEntry {
 // RecentlyWatched returns at most n entries, one per title.
 func RecentlyWatched(n int) []HistoryEntry {
 	ensureMigration()
+	ensureLibraryRepair()
 	entries, err := storage.Default().GetRecentProgress(context.Background(), n)
 	if err != nil {
 		return []HistoryEntry{}
