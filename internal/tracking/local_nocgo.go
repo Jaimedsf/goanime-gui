@@ -2,7 +2,7 @@
 
 package tracking
 
-// isCgoEnabled returns false when compiled without CGO
+// isCgoEnabled returns true since modernc.org/sqlite is pure Go
 func isCgoEnabled() bool {
-	return false
+	return true
 }

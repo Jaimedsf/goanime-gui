@@ -27,6 +27,7 @@ result
 /goanime.exe
 /goanime-gui
 /goanime-gui.exe
+/goanime-gui.exe.tmp
 /build/goanime-local
 
 # Wails build output
