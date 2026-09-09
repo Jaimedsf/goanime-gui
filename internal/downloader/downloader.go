@@ -843,6 +843,13 @@ func selectDownloadMethod(videoURL string) (primary, fallback downloadMethod, ha
 		return methodYtDlp, methodHTTP, false
 	case strings.Contains(videoURL, "blogger.com"):
 		return methodYtDlp, methodHTTP, false
+	// AnimeFire serves MPEG-DASH manifests from its CDN behind an image path
+	// (".../m.jpg" is an .mpd). Nothing in the URL says so, and a plain HTTP
+	// download would happily save the 2KB manifest as if it were the video, so
+	// route the CDN to yt-dlp, which resolves the manifest and muxes the
+	// separate audio and video representations.
+	case strings.Contains(videoURL, "akumast.net"):
+		return methodYtDlp, methodHTTP, false
 	case strings.Contains(videoURL, "sharepoint.com"):
 		return methodHTTP, methodYtDlp, true
 	case strings.Contains(videoURL, "allanime") || strings.Contains(videoURL, "allmanga"):

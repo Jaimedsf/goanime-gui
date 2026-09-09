@@ -56,9 +56,9 @@ func TestAllAnimeAdapter_GetStreamURL_ServerError(t *testing.T) {
 func TestAnimefireAdapter_GetAnimeEpisodes_Success(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `<html><body>`+
-			`<a class="lEp epT divNumEp smallbox px-2 mx-1 text-left d-flex" href="/ep/1">Episódio 1</a>`+
-			`</body></html>`)
+		fmt.Fprint(w, `{"data":{"hero":{"id":"test"},"episodes":[`+
+			`{"id":"ep1","title":"Primeiro","season":1,"number":1}`+
+			`]}}`)
 	}))
 	t.Cleanup(srv.Close)
 

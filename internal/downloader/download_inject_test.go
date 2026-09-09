@@ -117,6 +117,9 @@ func TestSelectDownloadMethod(t *testing.T) {
 		{"wixmp", "https://allanime.wixmp.com/foo", methodYtDlp, false},
 		{"wixmp_repackager", "https://repackager.wixmp.com/v.mpd", methodYtDlp, false},
 		{"blogger", "https://blogger.com/v.g?id=1", methodYtDlp, false},
+		// AnimeFire's DASH manifest wears a .jpg path, so the extension must
+		// not be what decides the route.
+		{"animefire_dash", "https://akumast.net/i/TOKEN/m.jpg", methodYtDlp, false},
 		{"sharepoint_fallback", "https://x.sharepoint.com/v.mp4", methodHTTP, true},
 		{"allanime", "https://allanime.to/v.mp4", methodYtDlp, false},
 		{"allmanga", "https://allmanga.to/v.mp4", methodYtDlp, false},

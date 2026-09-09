@@ -1,120 +1,128 @@
 package animefire
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
-	"github.com/alvarorichard/Goanime/internal/scraper/netx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func episodePageFixture(sources []struct{ src, quality string }) string {
-	var body strings.Builder
-	body.WriteString(`<html><head><title>Anime Episode</title></head><body>`)
-	for _, s := range sources {
-		fmt.Fprintf(&body, `<div data-video-src="%s" data-quality="%s"></div>`, s.src, s.quality)
-	}
-	body.WriteString(`</body></html>`)
-	return body.String()
+func episodePayload(streams string) string {
+	return fmt.Sprintf(`{"data":{"id":"ep1","title":"Um","season":1,"number":1,"streams":[%s]}}`, streams)
 }
 
-func TestAnimefireGetEpisodeStreamURLSelectsHighestQuality(t *testing.T) {
+func TestGetEpisodeStreamURLPrefersSubbed(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprint(w, episodePageFixture([]struct{ src, quality string }{
-			{"https://cdn.example.com/ep1_480p.mp4", "480p"},
-			{"https://cdn.example.com/ep1_720p.mp4", "720p"},
-			{"https://cdn.example.com/ep1_360p.mp4", "360p"},
-		}))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/episode/ep1", r.URL.Path)
+		_, _ = fmt.Fprint(w, episodePayload(`
+			{"audio":"dublado","is_mtl":false,"is_offline":false,"url":"https://cdn/dub/m.jpg","qualities":["480p"]},
+			{"audio":"legendado","is_mtl":false,"is_offline":false,"url":"https://cdn/sub/m.jpg","qualities":["480p"]}
+		`))
 	}))
 	defer server.Close()
 
-	client := NewAnimefireClient()
-	client.baseURL = server.URL
-
-	streamURL, err := client.GetEpisodeStreamURL(server.URL + "/anime/1/episode/1")
+	url, err := newTestClient(server).GetEpisodeStreamURL(server.URL + "/anime/abc/ep1")
 	require.NoError(t, err)
-	assert.Equal(t, "https://cdn.example.com/ep1_720p.mp4", streamURL)
+	assert.Equal(t, "https://cdn/sub/m.jpg", url)
 }
 
-func TestAnimefireGetEpisodeStreamURL1080pWins(t *testing.T) {
+func TestGetEpisodeStreamURLFallsBackToDubbed(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprint(w, episodePageFixture([]struct{ src, quality string }{
-			{"https://cdn.example.com/ep_720p.mp4", "720p"},
-			{"https://cdn.example.com/ep_1080p.mp4", "1080p"},
-		}))
+		_, _ = fmt.Fprint(w, episodePayload(`
+			{"audio":"dublado","is_mtl":false,"is_offline":false,"url":"https://cdn/dub/m.jpg","qualities":["720p"]}
+		`))
 	}))
 	defer server.Close()
 
-	client := NewAnimefireClient()
-	client.baseURL = server.URL
-
-	streamURL, err := client.GetEpisodeStreamURL(server.URL + "/anime/2/episode/1")
+	url, err := newTestClient(server).GetEpisodeStreamURL(server.URL + "/anime/abc/ep1")
 	require.NoError(t, err)
-	assert.Equal(t, "https://cdn.example.com/ep_1080p.mp4", streamURL)
+	assert.Equal(t, "https://cdn/dub/m.jpg", url)
 }
 
-func TestAnimefireGetEpisodeStreamURLSingleSource(t *testing.T) {
+func TestGetEpisodeStreamURLPrefersCleanTrackOverMTL(t *testing.T) {
 	t.Parallel()
 
-	const streamURL = "https://cdn.example.com/ep_only.mp4"
-
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprint(w, episodePageFixture([]struct{ src, quality string }{
-			{streamURL, ""},
-		}))
+		_, _ = fmt.Fprint(w, episodePayload(`
+			{"audio":"legendado","is_mtl":true,"is_offline":false,"url":"https://cdn/mtl/m.jpg","qualities":["480p"]},
+			{"audio":"dublado","is_mtl":false,"is_offline":false,"url":"https://cdn/dub/m.jpg","qualities":["480p"]}
+		`))
 	}))
 	defer server.Close()
 
-	client := NewAnimefireClient()
-	client.baseURL = server.URL
-
-	resolvedURL, err := client.GetEpisodeStreamURL(server.URL + "/anime/3/episode/1")
+	url, err := newTestClient(server).GetEpisodeStreamURL(server.URL + "/anime/abc/ep1")
 	require.NoError(t, err)
-	assert.Equal(t, streamURL, resolvedURL)
+	assert.Equal(t, "https://cdn/dub/m.jpg", url, "a machine-translated track loses to a clean one")
 }
 
-func TestAnimefireGetEpisodeStreamURLErrorsWhenNoSource(t *testing.T) {
+func TestGetEpisodeStreamURLUsesDegradedTrackAsLastResort(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprint(w, `<html><body><div class="episode-player"></div></body></html>`)
+		_, _ = fmt.Fprint(w, episodePayload(`
+			{"audio":"legendado","is_mtl":true,"is_offline":false,"url":"https://cdn/mtl/m.jpg","qualities":["480p"]}
+		`))
 	}))
 	defer server.Close()
 
-	client := NewAnimefireClient()
-	client.baseURL = server.URL
+	url, err := newTestClient(server).GetEpisodeStreamURL(server.URL + "/anime/abc/ep1")
+	require.NoError(t, err)
+	assert.Equal(t, "https://cdn/mtl/m.jpg", url)
+}
 
-	_, err := client.GetEpisodeStreamURL(server.URL + "/anime/4/episode/1")
+func TestGetEpisodeStreamURLErrorsWhenNoStream(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, episodePayload(``))
+	}))
+	defer server.Close()
+
+	_, err := newTestClient(server).GetEpisodeStreamURL(server.URL + "/anime/abc/ep1")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no video source")
+	assert.Contains(t, err.Error(), "no playable stream")
 }
 
-func TestAnimefireGetEpisodeStreamURLBlockedPage(t *testing.T) {
+func TestGetEpisodeStreamURLIgnoresStreamsWithoutURL(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprint(w, `<html><head><title>Just a moment...</title></head><body><div id="cf-wrapper"></div></body></html>`)
+		_, _ = fmt.Fprint(w, episodePayload(`
+			{"audio":"legendado","is_mtl":false,"is_offline":false,"url":"","qualities":[]},
+			{"audio":"dublado","is_mtl":false,"is_offline":false,"url":"https://cdn/dub/m.jpg","qualities":["480p"]}
+		`))
 	}))
 	defer server.Close()
 
-	client := NewAnimefireClient()
-	client.baseURL = server.URL
+	url, err := newTestClient(server).GetEpisodeStreamURL(server.URL + "/anime/abc/ep1")
+	require.NoError(t, err)
+	assert.Equal(t, "https://cdn/dub/m.jpg", url)
+}
 
-	_, err := client.GetEpisodeStreamURL(server.URL + "/anime/5/episode/1")
+func TestGetEpisodeStreamURLRequiresEpisodeID(t *testing.T) {
+	t.Parallel()
+
+	// An anime-level URL has no episode to resolve.
+	_, err := NewAnimefireClient().GetEpisodeStreamURL("https://animefire.io/anime/abc")
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, netx.ErrSourceUnavailable), "challenge page should yield netx.ErrSourceUnavailable, got: %v", err)
+	assert.Contains(t, err.Error(), "no episode id")
+}
+
+func TestGetEpisodeStreamURLBlockedPage(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer server.Close()
+
+	_, err := newTestClient(server).GetEpisodeStreamURL(server.URL + "/anime/abc/ep1")
+	require.Error(t, err)
 }

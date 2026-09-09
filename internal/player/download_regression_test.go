@@ -375,24 +375,22 @@ func TestHandleBatchDownloadRangeReturnsBatchErrorForAnimeFireNoStream(t *testin
 	restore := installDownloadRangeTestState(outputDir)
 	defer restore()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = w.Write([]byte(`<html><body><h1>episode page without any playable source</h1></body></html>`))
-	}))
-	defer server.Close()
-
 	SetAnimeName("JUJUTSU KAISEN Season 2", 2)
 	SetExactMediaType(string(models.MediaTypeAnime))
 	SetMediaMeta(&util.MediaMeta{Year: "2023", AnilistID: 145064, MalID: 51009})
 
+	// AnimeFire URLs are opaque handles into its JSON API, not pages the client
+	// fetches, so a stream failure can no longer be staged with an httptest
+	// server. A URL in the site's retired /animes/<slug> format fails to
+	// resolve locally — which is exactly what a stale library entry does.
 	anime := &models.Anime{
 		Name:      "JUJUTSU KAISEN Season 2",
-		URL:       server.URL + "/anime/jujutsu-kaisen-2",
+		URL:       "https://animefire.io/animes/jujutsu-kaisen-2-todos-os-episodios",
 		Source:    "Animefire.io",
 		MediaType: models.MediaTypeAnime,
 	}
 	episodes := []models.Episode{
-		{Number: "1", Num: 1, URL: server.URL + "/episodio-1"},
+		{Number: "1", Num: 1, URL: "https://animefire.io/animes/jujutsu-kaisen-2-todos-os-episodios/1"},
 	}
 
 	err := HandleBatchDownloadRange(episodes, anime, 1, 1)
@@ -404,7 +402,6 @@ func TestHandleBatchDownloadRangeReturnsBatchErrorForAnimeFireNoStream(t *testin
 	assert.Equal(t, 1, batchErr.Failures[0].Episode)
 	assert.Contains(t, err.Error(), "1 episode failed")
 	assert.Contains(t, err.Error(), "failed to resolve stream")
-	assert.Contains(t, err.Error(), "no video source found in the page")
 
 	var mp4s []string
 	walkErr := filepath.Walk(outputDir, func(path string, info os.FileInfo, err error) error {

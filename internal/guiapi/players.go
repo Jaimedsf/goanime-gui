@@ -106,7 +106,7 @@ func fallbackReferer(sourceName string) string {
 	case strings.EqualFold(sourceName, string(source.AllAnime)):
 		return "https://allmanga.to"
 	case strings.HasPrefix(strings.ToLower(sourceName), "animefire"):
-		return "https://animefire.plus"
+		return "https://animefire.io"
 	case strings.EqualFold(sourceName, string(source.Goyabu)):
 		return "https://goyabu.io"
 	case strings.EqualFold(sourceName, string(source.SuperFlix)):

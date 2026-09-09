@@ -1,38 +1,51 @@
-// Package scraper provides web scraping functionality for animefire.io
+// Package scraper provides access to animefire.io
 package animefire
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
-	"github.com/PuerkitoBio/goquery"
 	"github.com/alvarorichard/Goanime/internal/models"
 	"github.com/alvarorichard/Goanime/internal/scraper/netx"
 	"github.com/alvarorichard/Goanime/internal/util"
 )
 
 const (
+	// AnimefireBase is the public site. It still serves the pages a user opens
+	// in a browser, so it remains the shape of the URLs we hand upstream.
 	AnimefireBase = "https://animefire.io"
+	// AnimefireAPIBase is the JSON API the rewritten site talks to. Every
+	// listing, episode and stream lookup goes through it.
+	AnimefireAPIBase = "https://api.animefire.io"
+
+	// maxSearchResults caps how many search hits we map. The API answers with
+	// 30 for a broad query; more than that is noise in a picker.
+	maxSearchResults = 30
 )
 
-// Pre-compiled regexes for AnimeFire scraper (avoid per-call compilation)
-var (
-	animefireMp4Re     = regexp.MustCompile(`(https?://[^"'\s<>]+\.mp4(?:\?[^"'\s<>]*)?)`)
-	animefireM3U8Re    = regexp.MustCompile(`(https?://[^"'\s<>]+\.m3u8(?:\?[^"'\s<>]*)?)`)
-	animefireEpisodeRe = regexp.MustCompile(`(?i)epis[oó]dio\s+(\d+)`)
+// audio track names as the API spells them.
+const (
+	audioSubbed = "legendado"
+	audioDubbed = "dublado"
 )
 
-// AnimefireClient handles interactions with Animefire.io
+// AnimefireClient handles interactions with Animefire.io.
+//
+// The site was rebuilt as a JSON-backed single-page app: the old
+// /pesquisar/<name> and /animes/<slug>-todos-os-episodios routes now 404 and
+// there is no server-rendered markup left to scrape. This client talks to the
+// API those pages call instead.
 type AnimefireClient struct {
 	client     *http.Client
 	baseURL    string
+	apiBase    string
 	userAgent  string
 	maxRetries int
 	retryDelay time.Duration
@@ -43,29 +56,104 @@ func NewAnimefireClient() *AnimefireClient {
 	return &AnimefireClient{
 		client:     util.NewFastClient(),
 		baseURL:    AnimefireBase,
+		apiBase:    AnimefireAPIBase,
 		userAgent:  netx.UserAgent,
 		maxRetries: 2,
 		retryDelay: 100 * time.Millisecond,
 	}
 }
 
-// SearchAnime searches for anime on Animefire.io using the original logic.
-func (c *AnimefireClient) SearchAnime(query string) ([]*models.Anime, error) {
-	// AnimeFire expects spaces as hyphens in the URL
-	normalizedQuery := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(query)), " ", "-")
-	searchURL := fmt.Sprintf("%s/pesquisar/%s", c.baseURL, url.PathEscape(normalizedQuery))
+// --- API payloads ---------------------------------------------------------
 
-	util.Debug("AnimeFire search", "query", query, "normalized", normalizedQuery, "url", searchURL)
+// apiCard is one entry in a listing (search, home, recommendations).
+type apiCard struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Audio       string `json:"audio"`
+	PosterSrc   string `json:"poster_src"`
+	Status      string `json:"status"`
+	PublishedAt string `json:"published_at"`
+}
 
+type apiSearchResponse struct {
+	Data []apiCard `json:"data"`
+}
+
+// apiHero is the header block of an anime page: the title-level metadata.
+type apiHero struct {
+	ID          string            `json:"id"`
+	Titles      map[string]string `json:"titles"`
+	Synopsis    string            `json:"synopsis"`
+	PosterSrc   string            `json:"poster_src"`
+	Status      string            `json:"status"`
+	PublishedAt string            `json:"published_at"`
+	Audio       string            `json:"audio"`
+	Genres      []string          `json:"genres"`
+	Score       float64           `json:"score"`
+}
+
+// apiEpisode is one entry of an anime's episode list.
+type apiEpisode struct {
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	Audio    string `json:"audio"`
+	Season   int    `json:"season"`
+	Number   int    `json:"number"`
+	StillSrc string `json:"still_src"`
+	Synopsis string `json:"synopsis"`
+}
+
+// apiSeason describes one season. FirstEpisodeNumber is the season's offset in
+// the title's overall run: the API numbers episodes from 1 again inside every
+// season, and this is what turns that back into an absolute number.
+type apiSeason struct {
+	Title              string `json:"title"`
+	Number             int    `json:"number"`
+	FirstEpisodeNumber int    `json:"first_episode_number"`
+}
+
+type apiAnimeResponse struct {
+	Data struct {
+		Format   string       `json:"format"`
+		Hero     apiHero      `json:"hero"`
+		Seasons  []apiSeason  `json:"seasons"`
+		Episodes []apiEpisode `json:"episodes"`
+	} `json:"data"`
+}
+
+// apiStream is one playable track. The site ships a separate track per audio
+// language rather than per quality; the qualities live inside the manifest.
+type apiStream struct {
+	Audio     string   `json:"audio"`
+	IsMTL     bool     `json:"is_mtl"`
+	IsOffline bool     `json:"is_offline"`
+	URL       string   `json:"url"`
+	Qualities []string `json:"qualities"`
+}
+
+type apiEpisodeResponse struct {
+	Data struct {
+		ID      string      `json:"id"`
+		Title   string      `json:"title"`
+		Season  int         `json:"season"`
+		Number  int         `json:"number"`
+		Streams []apiStream `json:"streams"`
+	} `json:"data"`
+}
+
+// --- HTTP ------------------------------------------------------------------
+
+// getJSON performs a GET against the API and decodes the body into out,
+// retrying transport and 5xx failures the same way the scraper used to.
+func (c *AnimefireClient) getJSON(endpoint string, out any) error {
 	var lastErr error
 	attempts := c.maxRetries + 1
 
 	for attempt := range attempts {
-		req, err := http.NewRequest("GET", searchURL, http.NoBody)
+		req, err := http.NewRequest(http.MethodGet, endpoint, http.NoBody)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create request: %w", err)
+			return fmt.Errorf("failed to create request: %w", err)
 		}
-
 		c.decorateRequest(req)
 
 		resp, err := c.client.Do(req) // #nosec G704
@@ -75,60 +163,51 @@ func (c *AnimefireClient) SearchAnime(query string) ([]*models.Anime, error) {
 				c.sleep()
 				continue
 			}
-			return nil, lastErr
+			return lastErr
 		}
 
-		if err := netx.CheckHTTPStatus(resp, "AnimeFire search"); err != nil {
+		if err := netx.CheckHTTPStatus(resp, "AnimeFire API"); err != nil {
 			lastErr = err
 			_ = resp.Body.Close()
 			if c.shouldRetry(attempt) {
 				c.sleep()
 				continue
 			}
-			return nil, lastErr
+			return lastErr
 		}
 
-		doc, err := goquery.NewDocumentFromReader(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if err != nil {
-			lastErr = fmt.Errorf("failed to parse HTML: %w", err)
+			lastErr = fmt.Errorf("failed to read response: %w", err)
 			if c.shouldRetry(attempt) {
 				c.sleep()
 				continue
 			}
-			return nil, lastErr
+			return lastErr
 		}
 
-		if err := netx.CheckChallengeDocument(doc, "AnimeFire search"); err != nil {
-			lastErr = err
-			if c.shouldRetry(attempt) {
-				c.sleep()
-				continue
-			}
-			return nil, lastErr
+		if err := json.Unmarshal(body, out); err != nil {
+			// A non-JSON body here means an interstitial or an error page, not
+			// a transient fault: retrying would just fetch it again.
+			return fmt.Errorf("failed to parse AnimeFire API response: %w", err)
 		}
-
-		animes := c.extractSearchResults(doc)
-		if len(animes) == 0 {
-			// Legitimate empty result set – return without error
-			return []*models.Anime{}, nil
-		}
-
-		return animes, nil
+		return nil
 	}
 
 	if lastErr != nil {
-		return nil, lastErr
+		return lastErr
 	}
-	return nil, errors.New("failed to retrieve results from AnimeFire")
+	return errors.New("AnimeFire API request failed")
 }
 
 func (c *AnimefireClient) decorateRequest(req *http.Request) {
 	req.Header.Set("User-Agent", c.userAgent)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
 	req.Header.Set("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("Pragma", "no-cache")
+	req.Header.Set("Origin", c.baseURL)
 	req.Header.Set("Referer", c.baseURL+"/")
 }
 
@@ -143,376 +222,350 @@ func (c *AnimefireClient) sleep() {
 	time.Sleep(c.retryDelay)
 }
 
-func (c *AnimefireClient) extractSearchResults(doc *goquery.Document) []*models.Anime {
-	var animes []*models.Anime
+// --- identity --------------------------------------------------------------
 
-	doc.Find(".row.ml-1.mr-1 a").Each(func(_ int, s *goquery.Selection) {
-		if urlPath, exists := s.Attr("href"); exists {
-			name := strings.TrimSpace(s.Text())
-			if name != "" {
-				animes = append(animes, &models.Anime{
-					Name: name,
-					URL:  c.resolveURL(c.baseURL, urlPath),
-				})
-			}
-		}
-	})
-
-	if len(animes) > 0 {
-		return animes
-	}
-
-	doc.Find(".card_ani").Each(func(_ int, s *goquery.Selection) {
-		titleElem := s.Find(".ani_name a")
-		title := strings.TrimSpace(titleElem.Text())
-		link, exists := titleElem.Attr("href")
-
-		if exists && title != "" {
-			imgElem := s.Find(".div_img img")
-			imgURL, _ := imgElem.Attr("src")
-			if imgURL != "" {
-				imgURL = c.resolveURL(c.baseURL, imgURL)
-			}
-
-			animes = append(animes, &models.Anime{
-				Name:     title,
-				URL:      c.resolveURL(c.baseURL, link),
-				ImageURL: imgURL,
-			})
-		}
-	})
-
-	return animes
+// animeURL builds the public page URL for an anime id. This is what upstream
+// stores as the title's identity, so it has to stay stable and shareable.
+func (c *AnimefireClient) animeURL(id string) string {
+	return c.baseURL + "/anime/" + id
 }
 
-// resolveURL resolves relative URLs to absolute URLs.
-func (c *AnimefireClient) resolveURL(base, ref string) string {
-	if strings.HasPrefix(ref, "http") {
-		return ref
-	}
-	if strings.HasPrefix(ref, "/") {
-		return base + ref
-	}
-	return base + "/" + ref
+// episodeURL builds the handle for one episode. The site itself renders
+// episodes inside the anime page rather than on their own route, so this URL
+// exists to carry both ids back to GetEpisodeStreamURL.
+func (c *AnimefireClient) episodeURL(animeID, episodeID string) string {
+	return c.baseURL + "/anime/" + animeID + "/" + episodeID
 }
 
-// GetAnimeEpisodes fetches and parses the list of episodes for a given anime.
-func (c *AnimefireClient) GetAnimeEpisodes(animeURL string) ([]models.Episode, error) {
-	util.Debug("AnimeFire episodes", "url", animeURL)
-
-	var lastErr error
-	attempts := c.maxRetries + 1
-
-	for attempt := range attempts {
-		req, err := http.NewRequest("GET", animeURL, http.NoBody)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create request: %w", err)
-		}
-
-		c.decorateRequest(req)
-
-		resp, err := c.client.Do(req) // #nosec G704
-		if err != nil {
-			lastErr = fmt.Errorf("failed to make request: %w", err)
-			if c.shouldRetry(attempt) {
-				c.sleep()
-				continue
-			}
-			return nil, lastErr
-		}
-
-		if err := netx.CheckHTTPStatus(resp, "AnimeFire episodes"); err != nil {
-			lastErr = err
-			_ = resp.Body.Close()
-			if c.shouldRetry(attempt) {
-				c.sleep()
-				continue
-			}
-			return nil, lastErr
-		}
-
-		doc, err := goquery.NewDocumentFromReader(resp.Body)
-		_ = resp.Body.Close()
-		if err != nil {
-			lastErr = fmt.Errorf("failed to parse HTML: %w", err)
-			if c.shouldRetry(attempt) {
-				c.sleep()
-				continue
-			}
-			return nil, lastErr
-		}
-
-		if err := netx.CheckChallengeDocument(doc, "AnimeFire episodes"); err != nil {
-			lastErr = err
-			if c.shouldRetry(attempt) {
-				c.sleep()
-				continue
-			}
-			return nil, lastErr
-		}
-
-		episodes := c.parseEpisodes(doc)
-		sort.Slice(episodes, func(i, j int) bool {
-			return episodes[i].Num < episodes[j].Num
-		})
-
-		return episodes, nil
-	}
-
-	if lastErr != nil {
-		return nil, lastErr
-	}
-	return nil, errors.New("failed to retrieve episodes from AnimeFire")
+// animeIDFromURL pulls the opaque anime id out of a stored URL. It accepts the
+// current /anime/<id> shape and tolerates a trailing episode segment.
+func animeIDFromURL(raw string) (string, error) {
+	id, _, err := idsFromURL(raw)
+	return id, err
 }
 
-// parseEpisodes extracts a list of Episode structs from the given document.
-func (c *AnimefireClient) parseEpisodes(doc *goquery.Document) []models.Episode {
-	var episodes []models.Episode
-	doc.Find("a.lEp.epT.divNumEp.smallbox.px-2.mx-1.text-left.d-flex").Each(func(i int, s *goquery.Selection) {
-		episodeNum := s.Text()
-		episodeURL, _ := s.Attr("href")
+// idsFromURL splits a stored URL into its anime id and, when present, its
+// episode id.
+func idsFromURL(raw string) (animeID, episodeID string, err error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", "", errors.New("empty AnimeFire URL")
+	}
 
-		num := i + 1
-		matches := animefireEpisodeRe.FindStringSubmatch(episodeNum)
-		if len(matches) >= 2 {
-			parsed, err := strconv.Atoi(matches[1])
-			if err != nil {
-				util.Debug("Error parsing episode number", "text", episodeNum, "error", err)
-				return
-			}
-			num = parsed
+	path := trimmed
+	if parsed, perr := url.Parse(trimmed); perr == nil && parsed.Path != "" {
+		path = parsed.Path
+	}
+
+	parts := make([]string, 0, 3)
+	for _, seg := range strings.Split(path, "/") {
+		if seg != "" {
+			parts = append(parts, seg)
 		}
+	}
 
-		episodes = append(episodes, models.Episode{
-			Number: episodeNum,
-			Num:    num,
-			URL:    c.resolveURL(c.baseURL, episodeURL),
-		})
-	})
-
-	return episodes
-}
-
-// GetEpisodeStreamURL gets the streaming URL for a specific episode from AnimeFire.
-func (c *AnimefireClient) GetEpisodeStreamURL(episodeURL string) (string, error) {
-	util.Debug("AnimeFire stream URL extraction", "episodeURL", episodeURL)
-
-	var lastErr error
-	attempts := c.maxRetries + 1
-
-	for attempt := range attempts {
-		req, err := http.NewRequest("GET", episodeURL, http.NoBody)
-		if err != nil {
-			return "", fmt.Errorf("failed to create request: %w", err)
-		}
-
-		c.decorateRequest(req)
-
-		resp, err := c.client.Do(req) // #nosec G704
-		if err != nil {
-			lastErr = fmt.Errorf("failed to make request: %w", err)
-			if c.shouldRetry(attempt) {
-				c.sleep()
-				continue
-			}
-			return "", lastErr
-		}
-
-		if err := netx.CheckHTTPStatus(resp, "AnimeFire episode page"); err != nil {
-			lastErr = err
-			_ = resp.Body.Close()
-			if c.shouldRetry(attempt) {
-				c.sleep()
-				continue
-			}
-			return "", lastErr
-		}
-
-		doc, err := goquery.NewDocumentFromReader(resp.Body)
-		_ = resp.Body.Close()
-		if err != nil {
-			lastErr = fmt.Errorf("failed to parse HTML: %w", err)
-			if c.shouldRetry(attempt) {
-				c.sleep()
-				continue
-			}
-			return "", lastErr
-		}
-
-		if err := netx.CheckChallengeDocument(doc, "AnimeFire episode page"); err != nil {
-			lastErr = err
-			if c.shouldRetry(attempt) {
-				c.sleep()
-				continue
-			}
-			return "", lastErr
-		}
-
-		videoURL, err := c.extractVideoURL(doc)
-		if err == nil && videoURL != "" {
-			util.Debug("AnimeFire video URL found", "url", videoURL)
-			return videoURL, nil
-		}
-
-		lastErr = err
-		if c.shouldRetry(attempt) {
-			c.sleep()
+	// Expected shapes: anime/<id> and anime/<id>/<episodeID>.
+	for i, seg := range parts {
+		if seg != "anime" {
 			continue
 		}
+		if i+1 >= len(parts) {
+			break
+		}
+		animeID = parts[i+1]
+		if i+2 < len(parts) {
+			episodeID = parts[i+2]
+		}
+		return animeID, episodeID, nil
 	}
 
-	if lastErr != nil {
-		return "", lastErr
+	// The pre-rewrite catalog stored /animes/<slug>-todos-os-episodios URLs.
+	// Those pages are gone, so say so plainly instead of failing on a parse.
+	if len(parts) >= 2 && parts[0] == "animes" {
+		return "", "", fmt.Errorf("AnimeFire URL %q uses the retired /animes/<slug> format; search the title again to refresh it", raw)
 	}
-	return "", errors.New("failed to extract video URL from AnimeFire")
+
+	return "", "", fmt.Errorf("could not extract an AnimeFire id from %q", raw)
 }
 
-// extractVideoURL extracts the video URL from an AnimeFire episode page.
-func (c *AnimefireClient) extractVideoURL(doc *goquery.Document) (string, error) {
-	qualityRanks := map[string]int{"1080p": 5, "720p": 4, "480p": 3, "360p": 2, "240p": 1}
-	type videoSource struct {
-		url     string
-		quality int
+// --- search ----------------------------------------------------------------
+
+// SearchAnime searches for anime on Animefire.io.
+func (c *AnimefireClient) SearchAnime(query string) ([]*models.Anime, error) {
+	trimmed := strings.TrimSpace(query)
+	if trimmed == "" {
+		return nil, errors.New("empty search query")
 	}
 
-	// Method 1: Look for video element with data-video-src attribute
-	var sources []videoSource
-	doc.Find("[data-video-src]").Each(func(_ int, s *goquery.Selection) {
-		src, exists := s.Attr("data-video-src")
-		if !exists || src == "" {
-			return
+	endpoint := fmt.Sprintf("%s/animes/pesquisar?q=%s", c.apiBase, url.QueryEscape(trimmed))
+	util.Debug("AnimeFire search", "query", trimmed, "url", endpoint)
+
+	var parsed apiSearchResponse
+	if err := c.getJSON(endpoint, &parsed); err != nil {
+		return nil, err
+	}
+
+	animes := make([]*models.Anime, 0, len(parsed.Data))
+	for _, card := range parsed.Data {
+		if card.ID == "" || card.Title == "" {
+			continue
 		}
-
-		validatedURL, err := netx.ValidateStreamURL(src, "AnimeFire")
-		if err != nil {
-			return
-		}
-
-		label, _ := s.Attr("data-quality")
-		sources = append(sources, videoSource{url: validatedURL, quality: qualityRanks[strings.ToLower(label)]})
-	})
-	if len(sources) > 0 {
-		best := sources[0]
-		for _, source := range sources[1:] {
-			if source.quality > best.quality {
-				best = source
-			}
-		}
-		util.Debugf("AnimeFire: selected quality rank %d url %s from %d sources", best.quality, best.url, len(sources))
-		return best.url, nil
-	}
-
-	// Method 2: Look for video element with src attribute
-	if videoSrc, exists := doc.Find("video source").Attr("src"); exists && videoSrc != "" {
-		return netx.ValidateStreamURL(videoSrc, "AnimeFire")
-	}
-	if videoSrc, exists := doc.Find("video").Attr("src"); exists && videoSrc != "" {
-		return netx.ValidateStreamURL(videoSrc, "AnimeFire")
-	}
-
-	// Method 3: Look for iframe with Blogger video
-	iframeSrc := ""
-	doc.Find("iframe").Each(func(_ int, s *goquery.Selection) {
-		if src, exists := s.Attr("src"); exists {
-			if strings.Contains(src, "blogger.com") || strings.Contains(src, "blogspot.com") {
-				iframeSrc = src
-			}
-		}
-	})
-	if iframeSrc != "" {
-		util.Debug("Found Blogger iframe", "src", iframeSrc)
-		return netx.ValidateStreamURL(iframeSrc, "AnimeFire")
-	}
-
-	// Method 4: Look for data-video, data-src, data-url attributes in various elements
-	selectors := []string{
-		"div[data-video]",
-		"div[data-src]",
-		"div[data-url]",
-		"[data-player]",
-	}
-	attrs := []string{"data-video", "data-src", "data-url", "data-player"}
-
-	for i, selector := range selectors {
-		if elem := doc.Find(selector); elem.Length() > 0 {
-			if val, exists := elem.Attr(attrs[i]); exists && val != "" {
-				return netx.ValidateStreamURL(val, "AnimeFire")
-			}
+		animes = append(animes, &models.Anime{
+			Name:      decorateTitle(card.Title, card.Audio),
+			URL:       c.animeURL(card.ID),
+			ImageURL:  card.PosterSrc,
+			Year:      yearOf(card.PublishedAt),
+			MediaType: models.MediaTypeAnime,
+		})
+		if len(animes) >= maxSearchResults {
+			break
 		}
 	}
 
-	// Method 5: Search in HTML content for video URLs
-	html, err := doc.Html()
-	if err == nil {
-		if matches := extractAnimefireBloggerURL(html); matches != "" {
-			return netx.ValidateStreamURL(matches, "AnimeFire")
-		}
-
-		for _, re := range []*regexp.Regexp{animefireMp4Re, animefireM3U8Re} {
-			if re.MatchString(html) {
-				if matches := re.FindString(html); matches != "" {
-					return netx.ValidateStreamURL(matches, "AnimeFire")
-				}
-			}
-		}
-	}
-
-	return "", errors.New("no video source found in the page")
+	util.Debug("AnimeFire search results", "query", trimmed, "count", len(animes))
+	return animes, nil
 }
 
-func extractAnimefireBloggerURL(html string) string {
-	const marker = "https://www.blogger.com/video.g?token="
+// decorateTitle appends the audio track when a title is exclusively dubbed or
+// exclusively subbed. Upstream tagging reads that word off the name to label
+// results, and the rewritten API moved it out of the title into its own field.
+func decorateTitle(title, audio string) string {
+	name := strings.TrimSpace(title)
+	lower := strings.ToLower(strings.TrimSpace(audio))
+	switch {
+	case lower == "":
+		return name
+	case strings.Contains(lower, audioDubbed) && strings.Contains(lower, audioSubbed):
+		// Both tracks exist; leave the name clean.
+		return name
+	case strings.Contains(lower, audioDubbed):
+		return name + " (Dublado)"
+	case strings.Contains(lower, audioSubbed):
+		return name + " (Legendado)"
+	}
+	return name
+}
 
-	search := html
-	offset := 0
-	for {
-		start := strings.Index(search, marker)
-		if start < 0 {
-			return ""
+// yearOf takes the year out of an ISO date such as "2002-10-03".
+func yearOf(published string) string {
+	if len(published) >= 4 {
+		return published[:4]
+	}
+	return ""
+}
+
+// --- episodes --------------------------------------------------------------
+
+// GetAnimeEpisodes fetches the list of episodes for a given anime.
+func (c *AnimefireClient) GetAnimeEpisodes(animeURL string) ([]models.Episode, error) {
+	animeID, err := animeIDFromURL(animeURL)
+	if err != nil {
+		return nil, err
+	}
+
+	endpoint := fmt.Sprintf("%s/anime/%s", c.apiBase, url.PathEscape(animeID))
+	util.Debug("AnimeFire episodes", "animeID", animeID, "url", endpoint)
+
+	var parsed apiAnimeResponse
+	if err := c.getJSON(endpoint, &parsed); err != nil {
+		return nil, err
+	}
+
+	raw := parsed.Data.Episodes
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("no episodes listed for AnimeFire anime %q", animeID)
+	}
+
+	// The API returns every season in one list. Sort by (season, number) so the
+	// order upstream shows matches the order a viewer expects.
+	sort.SliceStable(raw, func(i, j int) bool {
+		if raw[i].Season != raw[j].Season {
+			return raw[i].Season < raw[j].Season
 		}
+		return raw[i].Number < raw[j].Number
+	})
 
-		start += offset
-		candidate := html[start:]
-		if end := strings.IndexAny(candidate, "\"' <>\r\n\t"); end >= 0 {
-			candidate = candidate[:end]
+	multiSeason := hasMultipleSeasons(raw)
+	offsets := seasonOffsets(parsed.Data.Seasons, raw)
+
+	episodes := make([]models.Episode, 0, len(raw))
+	for _, ep := range raw {
+		if ep.ID == "" {
+			continue
 		}
+		episodes = append(episodes, models.Episode{
+			Number:   episodeLabel(ep, multiSeason),
+			Num:      absoluteNumber(ep, offsets),
+			URL:      c.episodeURL(animeID, ep.ID),
+			Title:    models.TitleDetails{Romaji: ep.Title},
+			Synopsis: ep.Synopsis,
+			SeasonID: seasonID(ep.Season, multiSeason),
+		})
+	}
 
-		if isValidAnimefireBloggerURL(candidate) {
+	if len(episodes) == 0 {
+		return nil, fmt.Errorf("no usable episodes for AnimeFire anime %q", animeID)
+	}
+
+	util.Debug("AnimeFire episodes parsed", "animeID", animeID, "count", len(episodes))
+	return episodes, nil
+}
+
+// seasonOffsets maps a season number to the absolute number its first episode
+// carries. AnimeFire restarts numbering inside every season (Naruto lists
+// 1..52 four times over), but upstream treats this source as a flat episode
+// list, so a duplicated Num would make ordering and resume ambiguous.
+//
+// The API's own seasons block carries the offsets; when it is missing or
+// incomplete, the offsets are recomputed by counting the episodes of each
+// preceding season.
+func seasonOffsets(seasons []apiSeason, eps []apiEpisode) map[int]int {
+	offsets := make(map[int]int, len(seasons))
+	for _, s := range seasons {
+		if s.FirstEpisodeNumber > 0 {
+			offsets[s.Number] = s.FirstEpisodeNumber
+		}
+	}
+
+	// Fill in whatever the API did not describe, walking seasons in order and
+	// accumulating their episode counts.
+	counts := make(map[int]int, len(eps))
+	ordered := make([]int, 0, len(eps))
+	for _, ep := range eps {
+		if _, seen := counts[ep.Season]; !seen {
+			ordered = append(ordered, ep.Season)
+		}
+		counts[ep.Season]++
+	}
+	sort.Ints(ordered)
+
+	running := 1
+	for _, season := range ordered {
+		if _, ok := offsets[season]; !ok {
+			offsets[season] = running
+		}
+		running = offsets[season] + counts[season]
+	}
+
+	return offsets
+}
+
+// absoluteNumber turns a season-relative episode number into the title's
+// overall episode number.
+func absoluteNumber(ep apiEpisode, offsets map[int]int) int {
+	offset, ok := offsets[ep.Season]
+	if !ok {
+		return ep.Number
+	}
+	return offset + ep.Number - 1
+}
+
+// hasMultipleSeasons reports whether the list spans more than one season.
+func hasMultipleSeasons(eps []apiEpisode) bool {
+	if len(eps) == 0 {
+		return false
+	}
+	first := eps[0].Season
+	for _, ep := range eps[1:] {
+		if ep.Season != first {
+			return true
+		}
+	}
+	return false
+}
+
+// episodeLabel is the human-facing episode string. Single-season titles keep
+// the plain "Episódio N" the old scraper produced; multi-season ones need the
+// season to stay unambiguous, since numbering restarts.
+func episodeLabel(ep apiEpisode, multiSeason bool) string {
+	if multiSeason {
+		return fmt.Sprintf("T%d Episódio %d", ep.Season, ep.Number)
+	}
+	return fmt.Sprintf("Episódio %d", ep.Number)
+}
+
+// seasonID identifies the season for multi-season titles and stays empty for
+// single-season ones, matching what the rest of the app expects from a source
+// that does not advertise seasons.
+func seasonID(season int, multiSeason bool) string {
+	if !multiSeason {
+		return ""
+	}
+	return fmt.Sprintf("%d", season)
+}
+
+// --- stream ----------------------------------------------------------------
+
+// GetEpisodeStreamURL gets the streaming URL for a specific episode.
+//
+// The rewritten site serves MPEG-DASH manifests (an .mpd behind a .jpg path),
+// one per audio track, so there is no per-quality URL to pick between any
+// more: the manifest carries every rendition and the player adapts.
+func (c *AnimefireClient) GetEpisodeStreamURL(episodeURL string) (string, error) {
+	_, episodeID, err := idsFromURL(episodeURL)
+	if err != nil {
+		return "", err
+	}
+	if episodeID == "" {
+		return "", fmt.Errorf("AnimeFire URL %q carries no episode id", episodeURL)
+	}
+
+	endpoint := fmt.Sprintf("%s/episode/%s", c.apiBase, url.PathEscape(episodeID))
+	util.Debug("AnimeFire stream URL", "episodeID", episodeID, "url", endpoint)
+
+	var parsed apiEpisodeResponse
+	if err := c.getJSON(endpoint, &parsed); err != nil {
+		return "", err
+	}
+
+	stream := pickStream(parsed.Data.Streams)
+	if stream == nil {
+		return "", fmt.Errorf("no playable stream for AnimeFire episode %q", episodeID)
+	}
+
+	util.Debug("AnimeFire stream selected",
+		"episodeID", episodeID, "audio", stream.Audio, "qualities", strings.Join(stream.Qualities, ","))
+	return stream.URL, nil
+}
+
+// pickStream chooses the track to play: subbed first, then dubbed, then
+// whatever is left. Machine-translated and offline tracks are a last resort.
+func pickStream(streams []apiStream) *apiStream {
+	var subbed, dubbed, other, degraded *apiStream
+
+	for i := range streams {
+		s := &streams[i]
+		if s.URL == "" {
+			continue
+		}
+		if s.IsOffline || s.IsMTL {
+			if degraded == nil {
+				degraded = s
+			}
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(s.Audio)) {
+		case audioSubbed:
+			if subbed == nil {
+				subbed = s
+			}
+		case audioDubbed:
+			if dubbed == nil {
+				dubbed = s
+			}
+		default:
+			if other == nil {
+				other = s
+			}
+		}
+	}
+
+	for _, candidate := range []*apiStream{subbed, dubbed, other, degraded} {
+		if candidate != nil {
 			return candidate
 		}
-
-		next := start + len(marker)
-		if next >= len(html) {
-			return ""
-		}
-		search = html[next:]
-		offset = next
 	}
-}
-
-func isValidAnimefireBloggerURL(rawValue string) bool {
-	parsed, err := url.Parse(strings.TrimSpace(rawValue))
-	if err != nil {
-		return false
-	}
-
-	if parsed.Scheme != "https" || parsed.Host != "www.blogger.com" || parsed.Path != "/video.g" {
-		return false
-	}
-
-	token := parsed.Query().Get("token")
-	if token == "" {
-		return false
-	}
-
-	for _, r := range token {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
-			continue
-		}
-		return false
-	}
-
-	return true
+	return nil
 }
 
 // GetAnimeDetails is a placeholder method; details are fetched by the API layer.
@@ -525,6 +578,7 @@ func (c *AnimefireClient) GetAnimeDetails(animeURL string) (*models.Anime, error
 func NewClientForTest(serverURL string) *AnimefireClient {
 	c := NewAnimefireClient()
 	c.baseURL = serverURL
+	c.apiBase = serverURL
 	c.maxRetries = 0
 	c.retryDelay = 0
 	return c
