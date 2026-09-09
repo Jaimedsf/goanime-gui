@@ -504,7 +504,33 @@ const browseQuery = `query (
 }`
 
 // fetchCatalog performs the catalog request and maps it into BrowsePage.
+//
+// Jikan (MyAnimeList) is the primary backend: AniList disabled its own API,
+// answering every listing with HTTP 403 and the message "The AniList API has
+// been temporarily disabled due to severe stability issues." AniList stays
+// wired as a fallback rather than being deleted, because that outage is
+// declared temporary and Jikan has upstream outages of its own — whichever
+// one is answering, the catalog fills.
+//
+// Both backends produce the same BrowseItem vocabulary, so the frontend
+// cannot tell which one served a page.
 func fetchCatalog(q BrowseQuery) (*BrowsePage, error) {
+	page, jikanErr := jikanFetchCatalog(q)
+	if jikanErr == nil {
+		return page, nil
+	}
+
+	page, aniErr := fetchCatalogFromAniList(q)
+	if aniErr == nil {
+		return page, nil
+	}
+
+	// Lead with Jikan's reason: it is the backend that is meant to answer.
+	return nil, fmt.Errorf("nenhum catálogo disponível — Jikan: %v; AniList: %v", jikanErr, aniErr)
+}
+
+// fetchCatalogFromAniList is the original AniList-backed catalog request.
+func fetchCatalogFromAniList(q BrowseQuery) (*BrowsePage, error) {
 	vars := map[string]any{
 		"page":    q.Page,
 		"perPage": browsePerPage,
@@ -606,9 +632,15 @@ func fetchCatalog(q BrowseQuery) (*BrowsePage, error) {
 	return out, nil
 }
 
-// fetchGenres pulls AniList's genre list so the filter stays in sync with
-// whatever the API actually offers.
+// fetchGenres pulls the genre list so the filter stays in sync with whatever
+// the catalog backend actually offers, trying the same two sources in the
+// same order as fetchCatalog. Both return plain genre names; Jikan's numeric
+// ids stay inside the Jikan layer.
 func fetchGenres() ([]string, error) {
+	if names, err := jikanFetchGenres(); err == nil && len(names) > 0 {
+		return names, nil
+	}
+
 	var parsed struct {
 		GenreCollection []string `json:"GenreCollection"`
 	}
