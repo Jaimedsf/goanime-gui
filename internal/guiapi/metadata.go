@@ -59,8 +59,8 @@ type TitleInfo struct {
 	Score        int    `json:"score"`
 }
 
-// aniListMedia is the parsed payload of the single combined query below.
-type aniListMedia struct {
+// titleMedia is the parsed payload of the single combined query below.
+type titleMedia struct {
 	info   TitleInfo
 	cover  string
 	thumbs map[string]string
@@ -70,6 +70,12 @@ type aniListMedia struct {
 	// dates, so the flag costs one more field on a request that was
 	// happening anyway.
 	adult bool
+	// malID is the MyAnimeList id this resolved to, or 0 when the answer
+	// came from AniList. It is what lets the episode grid ask for stills
+	// later without repeating the title search.
+	malID int
+	// thumbsFetched marks that the stills request already happened.
+	thumbsFetched bool
 }
 
 // EpisodeArt is the artwork for one title's episode grid: the per-episode
@@ -86,11 +92,11 @@ type EpisodeArt struct {
 // return an empty ImageURL, and the grid had no second source for artwork
 // the way the result cards did.
 func GetEpisodeArt(r SearchResult) EpisodeArt {
-	media := lookupAniList(r.Name)
+	media := lookupTitle(r.Name)
 
 	art := EpisodeArt{Poster: r.ImageURL, Thumbs: map[string]string{}}
 	if media != nil {
-		art.Thumbs = media.thumbs
+		art.Thumbs = lookupThumbs(r.Name)
 		if art.Poster == "" {
 			art.Poster = media.cover
 		}
@@ -107,7 +113,7 @@ func GetEpisodeArt(r SearchResult) EpisodeArt {
 // unknown title yields a zero TitleInfo, and the frontend simply shows
 // nothing rather than an error state.
 func GetTitleInfo(r SearchResult) TitleInfo {
-	media := lookupAniList(r.Name)
+	media := lookupTitle(r.Name)
 	if media == nil {
 		// Fall back to whatever year the scraper itself reported.
 		return TitleInfo{Year: r.Year, ReleaseLabel: r.Year, ReleaseDate: r.Year}
@@ -127,11 +133,42 @@ func GetTitleInfo(r SearchResult) TitleInfo {
 // given title. Always returns a map (never an error) so the frontend can
 // fall back to the series cover without a failure path.
 func GetEpisodeThumbnails(title string) map[string]string {
-	media := lookupAniList(title)
+	return lookupThumbs(title)
+}
+
+// lookupThumbs returns the episode stills for a title, fetching them on
+// first use.
+//
+// They are separate from the main lookup because the two backends disagree
+// about their cost: AniList returned stills inside the same query, while
+// Jikan needs a second request per title. Fetching them eagerly would double
+// the requests behind every home-screen card to fill a map only the episode
+// grid ever reads — and Jikan allows 3 requests a second.
+//
+// The answer is written back to the cache, marked as fetched, so a title
+// that genuinely has no stills is not asked about again.
+func lookupThumbs(title string) map[string]string {
+	media := lookupTitle(title)
 	if media == nil {
 		return map[string]string{}
 	}
-	return media.thumbs
+	if media.thumbsFetched || media.malID <= 0 {
+		return media.thumbs
+	}
+
+	thumbs := jikanEpisodeThumbs(media.malID)
+	key := strings.ToLower(normalizeTitle(title))
+	if key != "" {
+		metaCachePutMedia(key, cachedMedia{
+			Info:          media.info,
+			Cover:         media.cover,
+			Thumbs:        thumbs,
+			Adult:         media.adult,
+			MalID:         media.malID,
+			ThumbsFetched: true,
+		})
+	}
+	return thumbs
 }
 
 // GetCover returns a cover-art URL for the given title from AniList.
@@ -152,7 +189,7 @@ func GetCover(title string) string {
 	// The combined lookup already fetches the cover, so reuse it when this
 	// title has been through it — otherwise a card needing both a cover and
 	// a release date would cost two AniList requests instead of one.
-	media, definitive := lookupAniListEntry(clean)
+	media, definitive := lookupTitleEntry(clean)
 	if media != nil && media.cover != "" {
 		metaCachePutCover(key, media.cover, false)
 		return media.cover
@@ -177,20 +214,20 @@ func GetCover(title string) string {
 	return url
 }
 
-// lookupAniList runs (and caches) the one combined query that backs covers,
+// lookupTitle runs (and caches) the one combined query that backs covers,
 // episode stills and release dates. A nil result means AniList had nothing
 // or the call failed; callers treat both the same way.
-func lookupAniList(title string) *aniListMedia {
-	m, _ := lookupAniListEntry(title)
+func lookupTitle(title string) *titleMedia {
+	m, _ := lookupTitleEntry(title)
 	return m
 }
 
-// lookupAniListEntry is lookupAniList plus the reason behind a nil:
+// lookupTitleEntry is lookupTitle plus the reason behind a nil:
 // definitive is true only when AniList itself said the title does not
 // exist, and false when the lookup merely failed to complete. GetCover
 // needs that distinction to decide whether an empty answer is worth
 // remembering; everyone else can ignore it.
-func lookupAniListEntry(title string) (media *aniListMedia, definitive bool) {
+func lookupTitleEntry(title string) (media *titleMedia, definitive bool) {
 	clean := normalizeTitle(title)
 	key := strings.ToLower(clean)
 	if key == "" {
@@ -200,21 +237,26 @@ func lookupAniListEntry(title string) (media *aniListMedia, definitive bool) {
 		if e.Missing {
 			return nil, !e.transient
 		}
-		return &aniListMedia{info: e.Info, cover: e.Cover, thumbs: e.Thumbs, adult: e.Adult}, true
+		return &titleMedia{
+			info: e.Info, cover: e.Cover, thumbs: e.Thumbs, adult: e.Adult,
+			malID: e.MalID, thumbsFetched: e.ThumbsFetched,
+		}, true
 	}
 
-	m, err := fetchAniListMedia(clean)
+	m, err := fetchTitleMedia(clean)
 	switch {
 	case err == nil && m != nil:
 		metaCachePutMedia(key, cachedMedia{
-			Info:   m.info,
-			Cover:  m.cover,
-			Thumbs: m.thumbs,
-			Adult:  m.adult,
+			Info:          m.info,
+			Cover:         m.cover,
+			Thumbs:        m.thumbs,
+			Adult:         m.adult,
+			MalID:         m.malID,
+			ThumbsFetched: m.thumbsFetched,
 		})
 		return m, true
 
-	case errors.Is(err, errAniListNotFound):
+	case errors.Is(err, errTitleNotFound):
 		// A real "no such title". Worth keeping: the PT-BR scrapers
 		// produce plenty of names AniList will never resolve, and each one
 		// used to cost a request on every single launch.
@@ -240,7 +282,7 @@ func lookupAniListEntry(title string) (media *aniListMedia, definitive bool) {
 // results the user searched for by name, which is a worse outcome than the
 // filter leaking. See searchWithContext for what that means for the toggle.
 func isAdultTitle(name string) bool {
-	m := lookupAniList(name)
+	m := lookupTitle(name)
 	return m != nil && m.adult
 }
 
@@ -263,15 +305,40 @@ const anilistQuery = `query ($search: String) {
 	}
 }`
 
+// fetchTitleMedia resolves one title's metadata, preferring Jikan and
+// falling back to AniList — the same order, and for the same reasons, as the
+// catalog in browse.go: AniList disabled its API, but the outage is declared
+// temporary and Jikan has upstream outages of its own.
+//
+// A "no such title" from the primary backend is not a reason to try the
+// secondary: the two index the same anime, so a real miss is a real miss,
+// and asking twice would double the cost of every unmatched PT-BR scraper
+// name — of which there are many. Only a failure to complete falls through.
+//
+// Thumbnails are not requested here. AniList returned them in the same
+// query, but Jikan needs a second call per title, and this path runs for
+// every card on the home screen. GetEpisodeArt asks for them separately,
+// where they are actually shown.
+func fetchTitleMedia(title string) (*titleMedia, error) {
+	m, err := fetchJikanMedia(title, false)
+	if err == nil {
+		return m, nil
+	}
+	if errors.Is(err, errTitleNotFound) {
+		return nil, err
+	}
+	return fetchAniListMedia(title)
+}
+
 // fetchAniListMedia performs the combined lookup. The error is what tells a
-// nil result apart: errAniListNotFound means AniList has no such title,
+// nil result apart: errTitleNotFound means AniList has no such title,
 // anything else means the call did not complete.
 //
 // It goes through anilistPost rather than issuing its own request: that is
 // where the pacing and the 429 retry live, and a cover lookup that bypassed
 // them would be exactly what pushes a cold start over AniList's limit — the
 // home screen can ask for a dozen of these at once.
-func fetchAniListMedia(title string) (*aniListMedia, error) {
+func fetchAniListMedia(title string) (*titleMedia, error) {
 	var parsed struct {
 		Media struct {
 			IsAdult      bool   `json:"isAdult"`
@@ -302,10 +369,13 @@ func fetchAniListMedia(title string) (*aniListMedia, error) {
 	}
 
 	m := parsed.Media
-	out := &aniListMedia{
+	out := &titleMedia{
 		cover:  m.CoverImage.Large,
 		adult:  m.IsAdult,
 		thumbs: make(map[string]string, len(m.StreamingEpisodes)),
+		// AniList returns the stills in this same query, so nothing more
+		// needs fetching for this entry.
+		thumbsFetched: true,
 	}
 	if out.cover == "" {
 		out.cover = m.CoverImage.Medium

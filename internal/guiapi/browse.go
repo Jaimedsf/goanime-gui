@@ -13,12 +13,12 @@ import (
 	"time"
 )
 
-// errAniListNotFound is AniList's 404. For a Media query it means "there is
-// no such title", which is an answer — not a failure — and the one case a
-// caller may cache negatively: everything else (timeouts, 5xx, a broken
-// connection) could succeed on the next try and must not be remembered as
-// "this title does not exist".
-var errAniListNotFound = errors.New("o AniList não encontrou esse título")
+// errTitleNotFound means the metadata backend answered "there is no such
+// title" — AniList's 404, or an empty result set from Jikan. That is an
+// answer, not a failure, and the one case a caller may cache negatively:
+// everything else (timeouts, 5xx, a broken connection) could succeed on the
+// next try and must not be remembered as "this title does not exist".
+var errTitleNotFound = errors.New("nenhum catálogo encontrou esse título")
 
 // The catalog comes from AniList rather than from the scrapers: none of the
 // sources expose a "what aired in Spring 2024" endpoint, and AniList is the
@@ -691,7 +691,15 @@ func anilistWait() {
 // anilistPost runs a GraphQL request and decodes the "data" object into out.
 // It is the single place this package talks to AniList, so the timeout,
 // headers, pacing and rate-limit handling all live in one spot.
+// anilistBreaker keeps a disabled AniList from costing a request — and its
+// 700ms pacing slot — on every lookup. See breaker.go.
+var anilistBreaker = &apiBreaker{name: "anilist"}
+
 func anilistPost(query string, variables map[string]any, out any) error {
+	if !anilistBreaker.allow() {
+		return errBackendUnavailable
+	}
+
 	payload := map[string]any{"query": query}
 	if variables != nil {
 		payload["variables"] = variables
@@ -707,10 +715,18 @@ func anilistPost(query string, variables map[string]any, out any) error {
 
 		retryAfter, err := anilistTry(body, out)
 		if err == nil {
+			anilistBreaker.success()
 			return nil
+		}
+		// A missing title is an answer, not an outage: AniList is up and
+		// talking to us, so it must not count against the breaker.
+		if errors.Is(err, errTitleNotFound) {
+			anilistBreaker.success()
+			return err
 		}
 		// retryAfter is only set for a 429; anything else is final.
 		if retryAfter <= 0 || attempt >= anilistMaxRetries {
+			anilistBreaker.failure()
 			return err
 		}
 		time.Sleep(retryAfter)
@@ -743,7 +759,7 @@ func anilistTry(body []byte, out any) (time.Duration, error) {
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		_, _ = io.Copy(io.Discard, resp.Body)
-		return 0, errAniListNotFound
+		return 0, errTitleNotFound
 	}
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, resp.Body)

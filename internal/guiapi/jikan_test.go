@@ -18,8 +18,12 @@ func jikanServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 	srv := httptest.NewServer(handler)
 	previous := jikanBaseURL
 	jikanBaseURL = srv.URL
+	// Tests that stage an outage would otherwise leave the breaker open for
+	// the next one.
+	jikanBreaker.reset()
 	t.Cleanup(func() {
 		jikanBaseURL = previous
+		jikanBreaker.reset()
 		srv.Close()
 	})
 	return srv
@@ -257,4 +261,140 @@ func TestFetchCatalogPrefersJikan(t *testing.T) {
 	require.Len(t, page.Items, 1)
 	assert.Equal(t, 1, hits, "AniList must not be consulted when Jikan answers")
 	assert.Equal(t, "Sousou no Frieren", page.Items[0].Title)
+}
+
+// --- title metadata --------------------------------------------------------
+
+const jikanSearchOnePayload = `{"pagination":{"has_next_page":false},"data":[{
+	"mal_id": 20,
+	"images": {"jpg": {"image_url":"https://cdn/small.jpg","large_image_url":"https://cdn/large.jpg"}},
+	"title": "Naruto",
+	"title_english": "Naruto",
+	"type": "TV",
+	"episodes": 220,
+	"status": "Finished Airing",
+	"score": 8.02,
+	"season": "fall",
+	"year": 2002,
+	"rating": "PG-13 - Teens 13 or older",
+	"genres": [{"mal_id":1,"name":"Action"}],
+	"explicit_genres": [],
+	"aired": {"prop": {"from": {"day":3,"month":10,"year":2002}}}
+}]}`
+
+func TestFetchJikanMediaMapsTitleInfo(t *testing.T) {
+	jikanServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/anime", r.URL.Path)
+		assert.Equal(t, "Naruto", r.URL.Query().Get("q"))
+		// The adult flag rides this lookup, so the search must not be
+		// filtered — a filtered miss would be cached as "no such title".
+		assert.Empty(t, r.URL.Query().Get("sfw"))
+		_, _ = fmt.Fprint(w, jikanSearchOnePayload)
+	})
+
+	m, err := fetchJikanMedia("Naruto", false)
+	require.NoError(t, err)
+
+	assert.Equal(t, "https://cdn/large.jpg", m.cover)
+	assert.Equal(t, 20, m.malID)
+	assert.False(t, m.adult)
+	assert.Equal(t, "TV", m.info.Format)
+	assert.Equal(t, "FINISHED", m.info.Status)
+	assert.Equal(t, 220, m.info.EpisodeCount)
+	assert.Equal(t, 80, m.info.Score)
+	assert.Equal(t, "2002-10-03", m.info.ReleaseDate)
+	assert.Equal(t, "2002", m.info.Year)
+
+	// Thumbs were not requested, so the entry must not claim to have them.
+	assert.Empty(t, m.thumbs)
+	assert.False(t, m.thumbsFetched)
+}
+
+func TestFetchJikanMediaReportsNotFoundOnEmptyResult(t *testing.T) {
+	jikanServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"pagination":{"has_next_page":false},"data":[]}`)
+	})
+
+	_, err := fetchJikanMedia("nao existe", false)
+	require.ErrorIs(t, err, errTitleNotFound)
+}
+
+// A real miss must not cost a second lookup: both backends index the same
+// anime, so AniList would only answer "not found" too.
+func TestFetchTitleMediaDoesNotFallBackOnNotFound(t *testing.T) {
+	hits := 0
+	jikanServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		_, _ = fmt.Fprint(w, `{"pagination":{"has_next_page":false},"data":[]}`)
+	})
+
+	_, err := fetchTitleMedia("nao existe")
+	require.ErrorIs(t, err, errTitleNotFound)
+	assert.Equal(t, 1, hits)
+}
+
+func TestFetchTitleMediaPrefersJikan(t *testing.T) {
+	jikanServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, jikanSearchOnePayload)
+	})
+
+	m, err := fetchTitleMedia("Naruto")
+	require.NoError(t, err)
+	assert.Equal(t, 20, m.malID)
+	assert.Equal(t, "https://cdn/large.jpg", m.cover)
+}
+
+func TestJikanIsAdult(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		anime jikanAnime
+		want  bool
+	}{
+		{"teen rating is not adult", jikanAnime{Rating: "PG-13 - Teens 13 or older"}, false},
+		{"mild nudity stays visible", jikanAnime{Rating: "R+ - Mild Nudity"}, false},
+		{"Rx is adult", jikanAnime{Rating: "Rx - Hentai"}, true},
+		{"explicit genres mark adult", jikanAnime{ExplicitGenres: []jikanNamed{{Name: "Hentai"}}}, true},
+		{"hentai genre marks adult", jikanAnime{Genres: []jikanNamed{{Name: "Hentai"}}}, true},
+		{"unrated is not adult", jikanAnime{}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, jikanIsAdult(tt.anime))
+		})
+	}
+}
+
+func TestJikanEpisodeThumbsKeysByEpisodeNumber(t *testing.T) {
+	jikanServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/anime/20/videos", r.URL.Path)
+		_, _ = fmt.Fprint(w, `{"data":{"episodes":[
+			{"mal_id":1,"title":"Enter: Naruto Uzumaki!","episode":"Episode 1",
+			 "images":{"jpg":{"image_url":"https://cdn/ep1.jpg"}}},
+			{"mal_id":2,"title":"My Name is Konohamaru!","episode":"Episode 2",
+			 "images":{"jpg":{"image_url":"https://cdn/ep2.jpg"}}},
+			{"mal_id":3,"title":"No image","episode":"Episode 3",
+			 "images":{"jpg":{"image_url":""}}}
+		]}}`)
+	})
+
+	thumbs := jikanEpisodeThumbs(20)
+	assert.Equal(t, map[string]string{
+		"1": "https://cdn/ep1.jpg",
+		"2": "https://cdn/ep2.jpg",
+	}, thumbs, "an episode without an image is skipped")
+}
+
+// Stills are best-effort: the grid falls back to the poster, so an outage
+// must not surface as an error.
+func TestJikanEpisodeThumbsSwallowsFailure(t *testing.T) {
+	jikanServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusGatewayTimeout)
+	})
+
+	assert.Empty(t, jikanEpisodeThumbs(20))
+	assert.Empty(t, jikanEpisodeThumbs(0), "a missing id makes no request at all")
 }

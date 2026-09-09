@@ -53,6 +53,13 @@ type cachedMedia struct {
 	Cover  string            `json:"cover,omitempty"`
 	Thumbs map[string]string `json:"thumbs,omitempty"`
 	Adult  bool              `json:"adult,omitempty"`
+	// MalID is the MyAnimeList id the entry resolved to, kept so episode
+	// stills can be fetched later without repeating the title search.
+	// Zero when the entry came from AniList, which has no MAL id here.
+	MalID int `json:"malID,omitempty"`
+	// ThumbsFetched records that the stills request was already made, so a
+	// title that genuinely has none is not re-requested on every open.
+	ThumbsFetched bool `json:"thumbsFetched,omitempty"`
 	// Missing marks a title AniList answered 404 for — a real "no such
 	// entry", worth remembering so the scrapers' undecorated oddities do
 	// not cost a request on every launch.

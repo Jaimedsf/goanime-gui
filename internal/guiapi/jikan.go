@@ -56,8 +56,16 @@ func jikanWait() {
 // jikanBaseURL is a variable so tests can point it at a local server.
 var jikanBaseURL = jikanBase
 
+// jikanBreaker stops the whole catalog and metadata layer from re-testing a
+// dead Jikan on every single lookup. See breaker.go.
+var jikanBreaker = &apiBreaker{name: "jikan"}
+
 // jikanGet performs one GET against the API and decodes it into out.
 func jikanGet(path string, out any) error {
+	if !jikanBreaker.allow() {
+		return errBackendUnavailable
+	}
+
 	jikanWait()
 
 	endpoint := jikanBaseURL + path
@@ -71,11 +79,13 @@ func jikanGet(path string, out any) error {
 	client := &http.Client{Timeout: jikanTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
+		jikanBreaker.failure()
 		return fmt.Errorf("jikan: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
+		jikanBreaker.failure()
 		// A 504 here is Jikan failing to reach MyAnimeList, not a fault of
 		// ours; say which side is down so the fallback's reason is legible.
 		if resp.StatusCode == http.StatusGatewayTimeout || resp.StatusCode == http.StatusBadGateway {
@@ -83,6 +93,10 @@ func jikanGet(path string, out any) error {
 		}
 		return fmt.Errorf("o Jikan respondeu HTTP %d", resp.StatusCode)
 	}
+
+	// The API answered. An empty result set is still an answer, so the
+	// breaker closes here rather than after the caller inspects the body.
+	jikanBreaker.success()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -130,7 +144,11 @@ type jikanAnime struct {
 	Season        string       `json:"season"`
 	Year          int          `json:"year"`
 	Genres        []jikanNamed `json:"genres"`
-	Aired         struct {
+	// Rating and ExplicitGenres are how MyAnimeList marks adult titles;
+	// AniList had a single isAdult boolean.
+	Rating         string       `json:"rating"`
+	ExplicitGenres []jikanNamed `json:"explicit_genres"`
+	Aired          struct {
 		Prop struct {
 			From jikanDateProp `json:"from"`
 		} `json:"prop"`
@@ -395,5 +413,148 @@ func jikanFetchCatalog(q BrowseQuery) (*BrowsePage, error) {
 		})
 	}
 
+	return out, nil
+}
+
+// --- title metadata --------------------------------------------------------
+
+// jikanRating carries MyAnimeList's content rating. "Rx - Hentai" is the
+// only value that marks a title adult; everything else, including "R+ -
+// Mild Nudity", stays visible, matching how AniList's isAdult behaved.
+func jikanIsAdult(a jikanAnime) bool {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(a.Rating)), "rx") {
+		return true
+	}
+	if len(a.ExplicitGenres) > 0 {
+		return true
+	}
+	for _, g := range a.Genres {
+		switch strings.ToLower(g.Name) {
+		case "hentai", "erotica":
+			return true
+		}
+	}
+	return false
+}
+
+// jikanSearchOne returns the best match for a title.
+//
+// sfw is deliberately NOT set: the adult flag rides this lookup, and a
+// filtered search would answer "no such title" for an adult one, which the
+// caller would cache as a permanent miss.
+func jikanSearchOne(title string) (*jikanAnime, error) {
+	params := url.Values{}
+	params.Set("q", title)
+	params.Set("limit", "1")
+	// order_by/sort left unset: Jikan's default for a text query is its own
+	// relevance ranking, which matches titles better than any explicit sort.
+
+	var parsed jikanListResponse
+	if err := jikanGet("/anime?"+params.Encode(), &parsed); err != nil {
+		return nil, err
+	}
+	if len(parsed.Data) == 0 {
+		return nil, errTitleNotFound
+	}
+	return &parsed.Data[0], nil
+}
+
+// jikanEpisodeThumbs fetches per-episode stills, the closest equivalent of
+// AniList's streamingEpisodes.
+//
+// It is a second request, so it is only made when thumbnails are actually
+// wanted — the episode grid — and never for a cover or a release date. A
+// failure is not an error worth propagating: the grid falls back to the
+// poster.
+func jikanEpisodeThumbs(malID int) map[string]string {
+	if malID <= 0 {
+		return map[string]string{}
+	}
+
+	var parsed struct {
+		Data struct {
+			Episodes []struct {
+				MalID   int    `json:"mal_id"`
+				Title   string `json:"title"`
+				Episode string `json:"episode"`
+				Images  struct {
+					JPG struct {
+						ImageURL string `json:"image_url"`
+					} `json:"jpg"`
+				} `json:"images"`
+			} `json:"episodes"`
+		} `json:"data"`
+	}
+
+	if err := jikanGet(fmt.Sprintf("/anime/%d/videos", malID), &parsed); err != nil {
+		return map[string]string{}
+	}
+
+	thumbs := make(map[string]string, len(parsed.Data.Episodes))
+	for i, ep := range parsed.Data.Episodes {
+		if ep.Images.JPG.ImageURL == "" {
+			continue
+		}
+		// Jikan spells the number in "episode" ("Episode 1"); fall back to
+		// the title, then to a 1-based index, so something still shows up.
+		num := extractEpisodeNumber(ep.Episode)
+		if num == "" {
+			num = extractEpisodeNumber(ep.Title)
+		}
+		if num == "" {
+			num = fmt.Sprintf("%d", i+1)
+		}
+		thumbs[num] = ep.Images.JPG.ImageURL
+	}
+	return thumbs
+}
+
+// fetchJikanMedia is the Jikan half of the title lookup, shaped exactly like
+// fetchAniListMedia so the cache above it cannot tell them apart.
+func fetchJikanMedia(title string, wantThumbs bool) (*titleMedia, error) {
+	a, err := jikanSearchOne(title)
+	if err != nil {
+		return nil, err
+	}
+
+	cover := a.Images.JPG.LargeImageURL
+	if cover == "" {
+		cover = a.Images.JPG.ImageURL
+	}
+
+	season := strings.ToUpper(strings.TrimSpace(a.Season))
+	date, label := formatRelease(
+		a.Aired.Prop.From.Year, a.Aired.Prop.From.Month, a.Aired.Prop.From.Day,
+		season, a.Year,
+	)
+
+	year := ""
+	switch {
+	case a.Aired.Prop.From.Year > 0:
+		year = fmt.Sprintf("%d", a.Aired.Prop.From.Year)
+	case a.Year > 0:
+		year = fmt.Sprintf("%d", a.Year)
+	}
+
+	out := &titleMedia{
+		cover:  cover,
+		adult:  jikanIsAdult(*a),
+		thumbs: map[string]string{},
+		malID:  a.MalID,
+		info: TitleInfo{
+			ReleaseDate:  date,
+			ReleaseLabel: label,
+			Year:         year,
+			Format:       jikanFormat(a.Type),
+			Status:       jikanStatus(a.Status),
+			EpisodeCount: a.Episodes,
+			Score:        jikanScore(a.Score),
+		},
+	}
+
+	if wantThumbs {
+		out.thumbs = jikanEpisodeThumbs(a.MalID)
+		out.thumbsFetched = true
+	}
 	return out, nil
 }
