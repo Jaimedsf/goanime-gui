@@ -586,7 +586,7 @@ func fetchCatalogFromAniList(q BrowseQuery) (*BrowsePage, error) {
 		} `json:"Page"`
 	}
 
-	if err := anilistPost(browseQuery, vars, &parsed); err != nil {
+	if err := anilistPostDirect(browseQuery, vars, &parsed); err != nil {
 		return nil, err
 	}
 
@@ -644,7 +644,7 @@ func fetchGenres() ([]string, error) {
 	var parsed struct {
 		GenreCollection []string `json:"GenreCollection"`
 	}
-	if err := anilistPost(`query { GenreCollection }`, nil, &parsed); err != nil {
+	if err := anilistPostDirect(`query { GenreCollection }`, nil, &parsed); err != nil {
 		return nil, err
 	}
 	return parsed.GenreCollection, nil
@@ -695,11 +695,22 @@ func anilistWait() {
 // 700ms pacing slot — on every lookup. See breaker.go.
 var anilistBreaker = &apiBreaker{name: "anilist"}
 
+// anilistPost is the breaker-guarded entry point, for the metadata fan-out.
 func anilistPost(query string, variables map[string]any, out any) error {
 	if !anilistBreaker.allow() {
-		return errBackendUnavailable
+		return anilistBreaker.lastFailure()
 	}
+	return anilistSend(query, variables, out)
+}
 
+// anilistPostDirect ignores an open breaker. The catalog is one request the
+// user asked for, not one of thirty background lookups, so it always attempts
+// and reports the real reason when it fails.
+func anilistPostDirect(query string, variables map[string]any, out any) error {
+	return anilistSend(query, variables, out)
+}
+
+func anilistSend(query string, variables map[string]any, out any) error {
 	payload := map[string]any{"query": query}
 	if variables != nil {
 		payload["variables"] = variables
@@ -726,7 +737,7 @@ func anilistPost(query string, variables map[string]any, out any) error {
 		}
 		// retryAfter is only set for a 429; anything else is final.
 		if retryAfter <= 0 || attempt >= anilistMaxRetries {
-			anilistBreaker.failure()
+			anilistBreaker.failure(err)
 			return err
 		}
 		time.Sleep(retryAfter)

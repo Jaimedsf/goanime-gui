@@ -56,16 +56,32 @@ func jikanWait() {
 // jikanBaseURL is a variable so tests can point it at a local server.
 var jikanBaseURL = jikanBase
 
-// jikanBreaker stops the whole catalog and metadata layer from re-testing a
-// dead Jikan on every single lookup. See breaker.go.
+// jikanBreaker stops the metadata fan-out from re-testing a dead Jikan on
+// every single lookup. See breaker.go.
 var jikanBreaker = &apiBreaker{name: "jikan"}
 
-// jikanGet performs one GET against the API and decodes it into out.
+// jikanGet performs one breaker-guarded GET. Use it for the metadata path,
+// where one user action produces a lookup per result.
 func jikanGet(path string, out any) error {
 	if !jikanBreaker.allow() {
-		return errBackendUnavailable
+		return jikanBreaker.lastFailure()
 	}
+	return jikanFetch(path, out)
+}
 
+// jikanGetDirect performs a GET that ignores an open breaker.
+//
+// The breaker is there to stop thirty background lookups from each paying to
+// rediscover an outage. A catalog page is not that: it is one request the
+// user explicitly asked for, so refusing it to save a single call is only a
+// way to show an error faster — and a vaguer one. It still reports its
+// outcome, so a success here closes the breaker for everyone.
+func jikanGetDirect(path string, out any) error {
+	return jikanFetch(path, out)
+}
+
+// jikanFetch is the request itself, shared by both entry points.
+func jikanFetch(path string, out any) error {
 	jikanWait()
 
 	endpoint := jikanBaseURL + path
@@ -79,19 +95,21 @@ func jikanGet(path string, out any) error {
 	client := &http.Client{Timeout: jikanTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
-		jikanBreaker.failure()
-		return fmt.Errorf("jikan: %w", err)
+		wrapped := fmt.Errorf("jikan: %w", err)
+		jikanBreaker.failure(wrapped)
+		return wrapped
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		jikanBreaker.failure()
 		// A 504 here is Jikan failing to reach MyAnimeList, not a fault of
 		// ours; say which side is down so the fallback's reason is legible.
+		failure := fmt.Errorf("o Jikan respondeu HTTP %d", resp.StatusCode)
 		if resp.StatusCode == http.StatusGatewayTimeout || resp.StatusCode == http.StatusBadGateway {
-			return fmt.Errorf("o Jikan não conseguiu falar com o MyAnimeList (HTTP %d)", resp.StatusCode)
+			failure = fmt.Errorf("o Jikan não conseguiu falar com o MyAnimeList (HTTP %d)", resp.StatusCode)
 		}
-		return fmt.Errorf("o Jikan respondeu HTTP %d", resp.StatusCode)
+		jikanBreaker.failure(failure)
+		return failure
 	}
 
 	// The API answered. An empty result set is still an answer, so the
@@ -257,7 +275,9 @@ func jikanGenreIndex() (map[string]int, error) {
 		var parsed struct {
 			Data []jikanNamed `json:"data"`
 		}
-		if err := jikanGet("/genres/anime", &parsed); err != nil {
+		// Direct: this backs a genre the user picked in the catalog, and an
+		// open breaker would silently drop the filter and list everything.
+		if err := jikanGetDirect("/genres/anime", &parsed); err != nil {
 			jikanGenreErr = err
 			return
 		}
@@ -278,7 +298,7 @@ func jikanFetchGenres() ([]string, error) {
 	var parsed struct {
 		Data []jikanNamed `json:"data"`
 	}
-	if err := jikanGet("/genres/anime", &parsed); err != nil {
+	if err := jikanGetDirect("/genres/anime", &parsed); err != nil {
 		return nil, err
 	}
 	out := make([]string, 0, len(parsed.Data))
@@ -366,7 +386,7 @@ func jikanCatalogPath(q BrowseQuery) string {
 // jikanFetchCatalog performs the catalog request and maps it into BrowsePage.
 func jikanFetchCatalog(q BrowseQuery) (*BrowsePage, error) {
 	var parsed jikanListResponse
-	if err := jikanGet(jikanCatalogPath(q), &parsed); err != nil {
+	if err := jikanGetDirect(jikanCatalogPath(q), &parsed); err != nil {
 		return nil, err
 	}
 

@@ -26,6 +26,12 @@ type apiBreaker struct {
 	mu        sync.Mutex
 	failures  int
 	openUntil time.Time
+	// last is the error that tripped it. An open breaker answers with this
+	// rather than a generic "unavailable": the reason a backend is down —
+	// AniList refusing with 403, Jikan unable to reach MyAnimeList — is the
+	// only useful thing to tell the user, and losing it made every message
+	// read the same.
+	last error
 }
 
 const (
@@ -52,18 +58,34 @@ func (b *apiBreaker) success() {
 	defer b.mu.Unlock()
 	b.failures = 0
 	b.openUntil = time.Time{}
+	b.last = nil
 }
 
 // failure records a call that did not complete, opening the breaker once the
-// failures run consecutive.
-func (b *apiBreaker) failure() {
+// failures run consecutive. cause is kept to explain a later refusal.
+func (b *apiBreaker) failure(cause error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	b.failures++
+	if cause != nil {
+		b.last = cause
+	}
 	if b.failures >= breakerThreshold {
 		b.openUntil = time.Now().Add(breakerCooldown)
 	}
+}
+
+// lastFailure is what an open breaker answers with: the error that tripped
+// it, so the caller reports why the backend is down rather than merely that
+// it is.
+func (b *apiBreaker) lastFailure() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.last != nil {
+		return b.last
+	}
+	return errBackendUnavailable
 }
 
 // reset returns the breaker to its initial state. Tests use it so one test's
@@ -73,6 +95,7 @@ func (b *apiBreaker) reset() {
 	defer b.mu.Unlock()
 	b.failures = 0
 	b.openUntil = time.Time{}
+	b.last = nil
 }
 
 // errBackendUnavailable is what an open breaker returns. It is deliberately
