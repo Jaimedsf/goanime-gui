@@ -371,10 +371,31 @@ const scheduleQuery = `query ($page: Int, $perPage: Int, $from: Int, $to: Int) {
 	}
 }`
 
-// fetchSchedule walks the airing schedule for the window, returning the
-// entries in broadcast order. The second result is true when the week is
-// incomplete — the walk hit schedulePageLimit, or a later page failed.
+// fetchSchedule returns the week's broadcasts in order. The second result is
+// true when the week is incomplete.
+//
+// AniList is tried first here — the opposite of the catalog — because it is
+// the only source that says which episode airs. Its airingSchedules gives one
+// row per broadcast with an exact instant and an episode number; Jikan can
+// only list what airs on a weekday and at what recurring time. So the richer
+// source leads, and Jikan catches the case AniList currently is: disabled.
 func fetchSchedule(start, end time.Time) ([]ScheduleEntry, bool, error) {
+	entries, partial, aniErr := fetchScheduleFromAniList(start, end)
+	if aniErr == nil {
+		return entries, partial, nil
+	}
+
+	entries, partial, jikanErr := jikanFetchSchedule(start, end)
+	if jikanErr == nil {
+		return entries, partial, nil
+	}
+
+	return nil, false, fmt.Errorf(
+		"nenhum calendário disponível — AniList: %v; Jikan: %v", aniErr, jikanErr)
+}
+
+// fetchScheduleFromAniList walks the airing schedule for the window.
+func fetchScheduleFromAniList(start, end time.Time) ([]ScheduleEntry, bool, error) {
 	var (
 		out     []ScheduleEntry
 		partial bool
@@ -418,7 +439,7 @@ func fetchSchedule(start, end time.Time) ([]ScheduleEntry, bool, error) {
 			} `json:"Page"`
 		}
 
-		if err := anilistPost(scheduleQuery, vars, &parsed); err != nil {
+		if err := anilistPostDirect(scheduleQuery, vars, &parsed); err != nil {
 			// A later page failing is not worth throwing away the days already
 			// collected: show what we have and mark the week partial.
 			if len(out) > 0 {

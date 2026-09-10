@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -397,4 +398,130 @@ func TestJikanEpisodeThumbsSwallowsFailure(t *testing.T) {
 
 	assert.Empty(t, jikanEpisodeThumbs(20))
 	assert.Empty(t, jikanEpisodeThumbs(0), "a missing id makes no request at all")
+}
+
+// --- airing calendar -------------------------------------------------------
+
+const jikanSchedulePayload = `{"pagination":{"has_next_page":false},"data":[
+	{
+		"mal_id": 52991,
+		"images": {"jpg": {"large_image_url":"https://cdn/frieren.jpg"}},
+		"title": "Sousou no Frieren",
+		"title_english": "Frieren: Beyond Journey's End",
+		"title_synonyms": ["Frieren at the Funeral"],
+		"type": "TV",
+		"status": "Currently Airing",
+		"score": 9.26,
+		"rating": "PG-13 - Teens 13 or older",
+		"broadcast": {"day":"Fridays","time":"23:00","timezone":"Asia/Tokyo"}
+	},
+	{
+		"mal_id": 999,
+		"title": "Sem horario",
+		"type": "TV",
+		"status": "Currently Airing",
+		"broadcast": {"day":"Fridays","time":"","timezone":"Asia/Tokyo"}
+	}
+]}`
+
+func TestJikanScheduleForDayMapsEntries(t *testing.T) {
+	jikanServer(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/schedules", r.URL.Path)
+		assert.Equal(t, "friday", r.URL.Query().Get("filter"))
+		assert.Equal(t, "true", r.URL.Query().Get("sfw"))
+		_, _ = fmt.Fprint(w, jikanSchedulePayload)
+	})
+
+	// 2026-09-11 is a Friday.
+	day := time.Date(2026, 9, 11, 0, 0, 0, 0, time.Local)
+	entries, err := jikanScheduleForDay(day)
+	require.NoError(t, err)
+
+	// The entry with no broadcast time is dropped rather than placed at midnight.
+	require.Len(t, entries, 1)
+
+	e := entries[0]
+	assert.Equal(t, 52991, e.AniListID)
+	assert.Equal(t, "Sousou no Frieren", e.Title)
+	assert.Equal(t, "Frieren: Beyond Journey's End", e.English)
+	assert.Equal(t, "https://cdn/frieren.jpg", e.Cover)
+	assert.Equal(t, "TV", e.Format)
+	assert.Equal(t, "RELEASING", e.Status)
+
+	// Jikan has no episode number, and a guessed one would be worse than none.
+	assert.Zero(t, e.Episode)
+
+	// 23:00 JST on that Friday, expressed as an instant.
+	want := time.Date(2026, 9, 11, 23, 0, 0, 0, tokyo)
+	assert.Equal(t, want.Unix(), e.AiringAt)
+	assert.Equal(t, want.Local().Format("15:04"), e.Time)
+
+	// Synonyms feed favorite matching.
+	assert.Contains(t, e.matchKeys, matchKey("Frieren at the Funeral"))
+}
+
+func TestBroadcastAt(t *testing.T) {
+	t.Parallel()
+
+	day := time.Date(2026, 9, 11, 0, 0, 0, 0, time.Local)
+
+	at, ok := broadcastAt(day, jikanBroadcast{Time: "23:00", Timezone: "Asia/Tokyo"})
+	require.True(t, ok)
+	assert.Equal(t, time.Date(2026, 9, 11, 23, 0, 0, 0, tokyo).Unix(), at.Unix())
+
+	// An unknown zone still resolves, falling back to JST — the zone almost
+	// every broadcast uses, and one a Windows build may not have tzdata for.
+	at, ok = broadcastAt(day, jikanBroadcast{Time: "01:30", Timezone: "Nowhere/Fake"})
+	require.True(t, ok)
+	assert.Equal(t, time.Date(2026, 9, 11, 1, 30, 0, 0, tokyo).Unix(), at.Unix())
+
+	for _, bad := range []string{"", "  ", "abc", "2500"} {
+		_, ok := broadcastAt(day, jikanBroadcast{Time: bad})
+		assert.False(t, ok, "time %q must be rejected", bad)
+	}
+}
+
+func TestJikanFetchScheduleCoversTheWholeWeek(t *testing.T) {
+	days := map[string]int{}
+	jikanServer(t, func(w http.ResponseWriter, r *http.Request) {
+		days[r.URL.Query().Get("filter")]++
+		_, _ = fmt.Fprint(w, `{"pagination":{"has_next_page":false},"data":[]}`)
+	})
+
+	start := time.Date(2026, 9, 7, 0, 0, 0, 0, time.Local) // Monday
+	_, _, err := jikanFetchSchedule(start, start.AddDate(0, 0, scheduleDays))
+	require.NoError(t, err)
+
+	assert.Len(t, days, 7, "every weekday is asked for exactly once")
+	for _, d := range []string{"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"} {
+		assert.Equal(t, 1, days[d], "weekday %s", d)
+	}
+}
+
+// One bad day should not throw away the rest of the week.
+func TestJikanFetchScheduleMarksAPartialWeek(t *testing.T) {
+	jikanServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("filter") == "wednesday" {
+			w.WriteHeader(http.StatusGatewayTimeout)
+			return
+		}
+		_, _ = fmt.Fprint(w, jikanSchedulePayload)
+	})
+
+	start := time.Date(2026, 9, 7, 0, 0, 0, 0, time.Local)
+	entries, partial, err := jikanFetchSchedule(start, start.AddDate(0, 0, scheduleDays))
+	require.NoError(t, err)
+	assert.True(t, partial, "the week is reported incomplete")
+	assert.NotEmpty(t, entries, "the days that worked are kept")
+}
+
+func TestJikanFetchScheduleFailsWhenNoDayWorks(t *testing.T) {
+	jikanServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusGatewayTimeout)
+	})
+
+	start := time.Date(2026, 9, 7, 0, 0, 0, 0, time.Local)
+	_, _, err := jikanFetchSchedule(start, start.AddDate(0, 0, scheduleDays))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "MyAnimeList")
 }

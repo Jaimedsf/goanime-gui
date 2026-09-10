@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -575,6 +576,163 @@ func fetchJikanMedia(title string, wantThumbs bool) (*titleMedia, error) {
 	if wantThumbs {
 		out.thumbs = jikanEpisodeThumbs(a.MalID)
 		out.thumbsFetched = true
+	}
+	return out, nil
+}
+
+// --- airing calendar -------------------------------------------------------
+
+// The calendar is the one place Jikan is a genuine downgrade, so it is the
+// fallback here rather than the primary.
+//
+// AniList answers with airingSchedules: one row per broadcast, carrying the
+// exact instant and, crucially, which episode airs. Jikan has no such
+// endpoint — /schedules lists the anime that air on a given weekday, with a
+// recurring broadcast time and no episode number at all. So a Jikan-backed
+// week says what airs and when, but not which episode; the calendar omits
+// the number rather than computing one, because an episode count guessed
+// from a start date goes wrong the first time a series takes a break, and a
+// confidently wrong number is worse than none.
+
+// jikanWeekdayFilter is the value /schedules expects for a weekday.
+var jikanWeekdayFilter = [...]string{
+	time.Sunday:    "sunday",
+	time.Monday:    "monday",
+	time.Tuesday:   "tuesday",
+	time.Wednesday: "wednesday",
+	time.Thursday:  "thursday",
+	time.Friday:    "friday",
+	time.Saturday:  "saturday",
+}
+
+// jikanBroadcast is when a series airs each week, in its own timezone.
+type jikanBroadcast struct {
+	Day      string `json:"day"`
+	Time     string `json:"time"`
+	Timezone string `json:"timezone"`
+}
+
+// tokyo is the fallback zone for a broadcast. Asia/Tokyo is UTC+9 with no
+// daylight saving, so a fixed offset is exact — which matters because
+// LoadLocation needs a tzdata database that a Windows build may not have.
+var tokyo = time.FixedZone("JST", 9*60*60)
+
+// broadcastAt resolves a recurring broadcast onto a specific date, returning
+// the instant it airs. ok is false when the broadcast time is unusable.
+func broadcastAt(day time.Time, b jikanBroadcast) (time.Time, bool) {
+	hhmm := strings.TrimSpace(b.Time)
+	if len(hhmm) < 4 || !strings.Contains(hhmm, ":") {
+		return time.Time{}, false
+	}
+
+	parsed, err := time.Parse("15:04", hhmm)
+	if err != nil {
+		return time.Time{}, false
+	}
+
+	loc := tokyo
+	if b.Timezone != "" {
+		if l, err := time.LoadLocation(b.Timezone); err == nil {
+			loc = l
+		}
+	}
+
+	at := time.Date(day.Year(), day.Month(), day.Day(),
+		parsed.Hour(), parsed.Minute(), 0, 0, loc)
+	return at.Local(), true
+}
+
+// jikanScheduleAnime is one entry of /schedules.
+type jikanScheduleAnime struct {
+	jikanAnime
+	Broadcast     jikanBroadcast `json:"broadcast"`
+	TitleSynonyms []string       `json:"title_synonyms"`
+}
+
+type jikanScheduleResponse struct {
+	Pagination jikanPagination      `json:"pagination"`
+	Data       []jikanScheduleAnime `json:"data"`
+}
+
+// jikanFetchSchedule builds the week by asking for each weekday in the
+// window. The second result is true when some day could not be fetched, so
+// the caller can show what it has and mark the week partial.
+func jikanFetchSchedule(start, end time.Time) ([]ScheduleEntry, bool, error) {
+	var (
+		out      []ScheduleEntry
+		partial  bool
+		lastErr  error
+		anyDayOK bool
+	)
+
+	for day := start; day.Before(end); day = day.AddDate(0, 0, 1) {
+		entries, err := jikanScheduleForDay(day)
+		if err != nil {
+			lastErr = err
+			partial = true
+			continue
+		}
+		anyDayOK = true
+		out = append(out, entries...)
+	}
+
+	if !anyDayOK {
+		if lastErr == nil {
+			lastErr = errBackendUnavailable
+		}
+		return nil, false, lastErr
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].AiringAt < out[j].AiringAt
+	})
+	return out, partial, nil
+}
+
+// jikanScheduleForDay fetches everything airing on one date.
+func jikanScheduleForDay(day time.Time) ([]ScheduleEntry, error) {
+	params := url.Values{}
+	params.Set("filter", jikanWeekdayFilter[day.Weekday()])
+	params.Set("limit", fmt.Sprintf("%d", jikanPerPage))
+	params.Set("sfw", "true")
+
+	var parsed jikanScheduleResponse
+	// Direct: the calendar is a user-initiated load, like the catalog.
+	if err := jikanGetDirect("/schedules?"+params.Encode(), &parsed); err != nil {
+		return nil, err
+	}
+
+	out := make([]ScheduleEntry, 0, len(parsed.Data))
+	for _, a := range parsed.Data {
+		at, ok := broadcastAt(day, a.Broadcast)
+		if !ok {
+			continue
+		}
+
+		cover := a.Images.JPG.LargeImageURL
+		if cover == "" {
+			cover = a.Images.JPG.ImageURL
+		}
+
+		out = append(out, ScheduleEntry{
+			// A MyAnimeList id, not an AniList one. The field keeps its name
+			// for the frontend; nothing joins on it, a click runs a search.
+			AniListID: a.MalID,
+			Title:     firstNonEmpty(a.Title, a.TitleEnglish, a.TitleJapanese),
+			Romaji:    a.Title,
+			English:   a.TitleEnglish,
+			Cover:     cover,
+			// Deliberately left unset: see the note above.
+			Episode:  0,
+			AiringAt: at.Unix(),
+			Time:     at.Format("15:04"),
+			Format:   jikanFormat(a.Type),
+			Status:   jikanStatus(a.Status),
+			adult:    jikanIsAdult(a.jikanAnime),
+			matchKeys: matchKeysFor(append([]string{
+				a.Title, a.TitleEnglish, a.TitleJapanese,
+			}, a.TitleSynonyms...)),
+		})
 	}
 	return out, nil
 }
