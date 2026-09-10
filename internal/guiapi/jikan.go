@@ -325,7 +325,7 @@ func jikanSeasonName(season string) string {
 // listing narrowed by ordering and status. Jikan has no direct equivalent of
 // AniList's TRENDING sort, so "em alta" becomes the most-watched titles that
 // are actually airing — the same thing the listing is meant to convey.
-func jikanCatalogPath(q BrowseQuery) string {
+func jikanCatalogPath(q BrowseQuery) (string, error) {
 	params := url.Values{}
 	params.Set("page", fmt.Sprintf("%d", q.Page))
 	params.Set("limit", fmt.Sprintf("%d", jikanPerPage))
@@ -337,7 +337,7 @@ func jikanCatalogPath(q BrowseQuery) string {
 			params.Set("filter", t)
 		}
 		return fmt.Sprintf("/seasons/%d/%s?%s",
-			q.Year, jikanSeasonName(q.Season), params.Encode())
+			q.Year, jikanSeasonName(q.Season), params.Encode()), nil
 	}
 
 	switch q.Mode {
@@ -374,20 +374,32 @@ func jikanCatalogPath(q BrowseQuery) string {
 		params.Set("end_date", fmt.Sprintf("%d-12-31", q.Year))
 	}
 	if q.Genre != "" {
-		if index, err := jikanGenreIndex(); err == nil {
-			if id, ok := index[strings.ToLower(q.Genre)]; ok {
-				params.Set("genres", fmt.Sprintf("%d", id))
-			}
+		// Decline rather than drop the filter: listing everything under a
+		// heading that names a genre is worse than saying it cannot be
+		// applied here. The next backend in the chain may know it.
+		index, err := jikanGenreIndex()
+		if err != nil {
+			return "", err
 		}
+		id, ok := index[strings.ToLower(q.Genre)]
+		if !ok {
+			return "", fmt.Errorf("o Jikan não conhece o gênero %q", q.Genre)
+		}
+		params.Set("genres", fmt.Sprintf("%d", id))
 	}
 
-	return "/anime?" + params.Encode()
+	return "/anime?" + params.Encode(), nil
 }
 
 // jikanFetchCatalog performs the catalog request and maps it into BrowsePage.
 func jikanFetchCatalog(q BrowseQuery) (*BrowsePage, error) {
+	path, err := jikanCatalogPath(q)
+	if err != nil {
+		return nil, err
+	}
+
 	var parsed jikanListResponse
-	if err := jikanGetDirect(jikanCatalogPath(q), &parsed); err != nil {
+	if err := jikanGetDirect(path, &parsed); err != nil {
 		return nil, err
 	}
 
@@ -735,4 +747,12 @@ func jikanScheduleForDay(day time.Time) ([]ScheduleEntry, error) {
 		})
 	}
 	return out, nil
+}
+
+// resetJikanGenreIndex clears the memoised genre index. Tests use it so one
+// test's stub server does not fix the index for the next.
+func resetJikanGenreIndex() {
+	jikanGenreOnce = sync.Once{}
+	jikanGenreIDs = nil
+	jikanGenreErr = nil
 }

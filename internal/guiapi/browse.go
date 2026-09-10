@@ -503,30 +503,68 @@ const browseQuery = `query (
 	}
 }`
 
-// fetchCatalog performs the catalog request and maps it into BrowsePage.
+// catalogBackend is one source the catalog can be built from. They are tried
+// in order, and they all produce the same AniList-shaped BrowseItem, so the
+// frontend cannot tell which one served a page.
+type catalogBackend struct {
+	name   string
+	page   func(BrowseQuery) (*BrowsePage, error)
+	genres func() ([]string, error)
+}
+
+// catalogBackends is the order the catalog is attempted in.
 //
-// Jikan (MyAnimeList) is the primary backend: AniList disabled its own API,
-// answering every listing with HTTP 403 and the message "The AniList API has
-// been temporarily disabled due to severe stability issues." AniList stays
-// wired as a fallback rather than being deleted, because that outage is
-// declared temporary and Jikan has upstream outages of its own — whichever
-// one is answering, the catalog fills.
+// There are three because two were not enough: AniList disabled its API
+// ("temporarily disabled due to severe stability issues", HTTP 403 to
+// everything) and Jikan has been unable to reach MyAnimeList (HTTP 504),
+// which between them left the catalog with no working source at all. Kitsu is
+// a separate database on separate infrastructure, so it does not share either
+// failure.
 //
-// Both backends produce the same BrowseItem vocabulary, so the frontend
-// cannot tell which one served a page.
+// The order is by how close each one's data sits to what the app already
+// speaks, not by who is up — availability is what the fallback is for.
+var catalogBackends = []catalogBackend{
+	{name: "Jikan", page: jikanFetchCatalog, genres: jikanFetchGenres},
+	{name: "Kitsu", page: kitsuFetchCatalog, genres: kitsuFetchGenres},
+	{name: "AniList", page: fetchCatalogFromAniList, genres: anilistFetchGenres},
+}
+
+// genreBackends is the order the genre dropdown is filled from, and it is
+// deliberately not the order above.
+//
+// The dropdown must only offer genres the backend that serves the catalog can
+// actually filter by, and the three vocabularies barely overlap — 44 of
+// Jikan's 78 genre names have no Kitsu equivalent. Jikan's /genres/anime is
+// served from its cache and answers even while its catalog cannot, so taking
+// the list from there would fill the dropdown with names the page that
+// follows has no way to honour.
+//
+// Kitsu leads because it is the backend most likely to answer a page. When a
+// name does not map, the backend declines the query and the chain moves on
+// rather than quietly listing everything.
+var genreBackends = []catalogBackend{
+	{name: "Kitsu", genres: kitsuFetchGenres},
+	{name: "Jikan", genres: jikanFetchGenres},
+	{name: "AniList", genres: anilistFetchGenres},
+}
+
+// fetchCatalog returns one catalog page from the first backend that answers.
+//
+// When none does, the error names every one of them and why: an outage the
+// user can do nothing about is still worth stating precisely, and a single
+// generic message made three different failures look like one.
 func fetchCatalog(q BrowseQuery) (*BrowsePage, error) {
-	page, jikanErr := jikanFetchCatalog(q)
-	if jikanErr == nil {
-		return page, nil
+	reasons := make([]string, 0, len(catalogBackends))
+
+	for _, backend := range catalogBackends {
+		page, err := backend.page(q)
+		if err == nil {
+			return page, nil
+		}
+		reasons = append(reasons, fmt.Sprintf("%s: %v", backend.name, err))
 	}
 
-	page, aniErr := fetchCatalogFromAniList(q)
-	if aniErr == nil {
-		return page, nil
-	}
-
-	// Lead with Jikan's reason: it is the backend that is meant to answer.
-	return nil, fmt.Errorf("nenhum catálogo disponível — Jikan: %v; AniList: %v", jikanErr, aniErr)
+	return nil, fmt.Errorf("nenhum catálogo disponível — %s", strings.Join(reasons, "; "))
 }
 
 // fetchCatalogFromAniList is the original AniList-backed catalog request.
@@ -632,15 +670,27 @@ func fetchCatalogFromAniList(q BrowseQuery) (*BrowsePage, error) {
 	return out, nil
 }
 
-// fetchGenres pulls the genre list so the filter stays in sync with whatever
-// the catalog backend actually offers, trying the same two sources in the
-// same order as fetchCatalog. Both return plain genre names; Jikan's numeric
-// ids stay inside the Jikan layer.
+// fetchGenres pulls the genre list from the same backends in the same order,
+// so the filter offers whatever the source that will answer actually has.
 func fetchGenres() ([]string, error) {
-	if names, err := jikanFetchGenres(); err == nil && len(names) > 0 {
-		return names, nil
+	var lastErr error
+	for _, backend := range genreBackends {
+		names, err := backend.genres()
+		if err == nil && len(names) > 0 {
+			return names, nil
+		}
+		if err != nil {
+			lastErr = err
+		}
 	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, errBackendUnavailable
+}
 
+// anilistFetchGenres reads AniList's genre collection.
+func anilistFetchGenres() ([]string, error) {
 	var parsed struct {
 		GenreCollection []string `json:"GenreCollection"`
 	}

@@ -320,14 +320,26 @@ const anilistQuery = `query ($search: String) {
 // every card on the home screen. GetEpisodeArt asks for them separately,
 // where they are actually shown.
 func fetchTitleMedia(title string) (*titleMedia, error) {
-	m, err := fetchJikanMedia(title, false)
-	if err == nil {
-		return m, nil
+	backends := []func(string) (*titleMedia, error){
+		func(t string) (*titleMedia, error) { return fetchJikanMedia(t, false) },
+		fetchKitsuMedia,
+		fetchAniListMedia,
 	}
-	if errors.Is(err, errTitleNotFound) {
-		return nil, err
+
+	var lastErr error
+	for _, fetch := range backends {
+		m, err := fetch(title)
+		if err == nil {
+			return m, nil
+		}
+		// A real miss ends the search: the backends index the same anime, so
+		// asking the rest would only repeat the answer at triple the cost.
+		if errors.Is(err, errTitleNotFound) {
+			return nil, err
+		}
+		lastErr = err
 	}
-	return fetchAniListMedia(title)
+	return nil, lastErr
 }
 
 // fetchAniListMedia performs the combined lookup. The error is what tells a

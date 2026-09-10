@@ -182,7 +182,8 @@ func TestJikanCatalogPathPerMode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := jikanCatalogPath(tt.query)
+			got, buildErr := jikanCatalogPath(tt.query)
+			require.NoError(t, buildErr)
 
 			parsed, err := url.Parse(got)
 			require.NoError(t, err)
@@ -235,18 +236,21 @@ func TestJikanFetchGenresReturnsNames(t *testing.T) {
 	assert.Equal(t, []string{"Action", "Comedy"}, names)
 }
 
-// The catalog must survive either backend being down: Jikan answers when it
-// can, and AniList is tried only when it cannot.
+// With every backend down the error has to name each one rather than
+// silently reporting an empty catalog. Kitsu is stubbed as down too, or the
+// chain would reach the real API and legitimately succeed.
 func TestFetchCatalogFallsBackToAniListWhenJikanIsDown(t *testing.T) {
 	jikanServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusGatewayTimeout)
 	})
+	kitsuServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	})
 
-	// AniList is unreachable here too, so the error has to name both sides
-	// rather than silently reporting an empty catalog.
 	_, err := fetchCatalog(BrowseQuery{Mode: ModeTop, Page: 1}.normalise())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Jikan")
+	assert.Contains(t, err.Error(), "Kitsu")
 	assert.Contains(t, err.Error(), "AniList")
 }
 
@@ -524,4 +528,24 @@ func TestJikanFetchScheduleFailsWhenNoDayWorks(t *testing.T) {
 	_, _, err := jikanFetchSchedule(start, start.AddDate(0, 0, scheduleDays))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "MyAnimeList")
+}
+
+// A genre the backend cannot map must make it decline, not drop the filter:
+// Jikan would list everything under a heading naming the genre.
+func TestJikanDeclinesAnUnknownGenre(t *testing.T) {
+	jikanServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"data":[{"mal_id":1,"name":"Action"}]}`)
+	})
+	resetJikanGenreIndex()
+
+	_, err := jikanCatalogPath(BrowseQuery{Mode: ModeTop, Page: 1, Genre: "Gênero Inventado"})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "não conhece o gênero")
+
+	// One it does know still resolves to an id.
+	path, err := jikanCatalogPath(BrowseQuery{Mode: ModeTop, Page: 1, Genre: "Action"})
+	require.NoError(t, err)
+	parsed, perr := url.Parse(path)
+	require.NoError(t, perr)
+	assert.Equal(t, "1", parsed.Query().Get("genres"))
 }
