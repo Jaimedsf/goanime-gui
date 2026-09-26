@@ -29,7 +29,7 @@ func TestKindsFor(t *testing.T) {
 		{"unknown id falls back to all", "flixhq", nil},
 		{"ptbr group", "ptbr", ptbrKinds},
 		{"ptbr hyphenated", "PT-BR", ptbrKinds},
-		{"single source is case-insensitive", "allanime", []source.SourceKind{source.AllAnime}},
+		{"single source is case-insensitive", "hianime", []source.SourceKind{source.HiAnime}},
 		{"single source exact", "SuperFlix", []source.SourceKind{source.SuperFlix}},
 	}
 

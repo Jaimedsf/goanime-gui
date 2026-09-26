@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -22,6 +23,8 @@ import (
 	"github.com/alvarorichard/Goanime/internal/models"
 	"github.com/alvarorichard/Goanime/internal/scraper/netx"
 	"github.com/alvarorichard/Goanime/internal/util"
+	"github.com/alvarorichard/Goanime/internal/util/jsonx"
+	"golang.org/x/net/publicsuffix"
 )
 
 const (
@@ -70,10 +73,26 @@ type GoyabuClient struct {
 	retryDelay time.Duration
 }
 
-// NewGoyabuClient creates a new Goyabu client
+// NewGoyabuClient creates a new Goyabu client.
+//
+// The HTTP client is wrapped with gateTransport: Goyabu sits behind a
+// Cloudflare managed challenge, so a 403 interstitial is handed to the browser
+// solver once and the request replayed with the resulting clearance. See
+// challenge.go for the measurements behind that design.
 func NewGoyabuClient() *GoyabuClient {
+	surf := util.NewFastClient()
+	jar, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
+	gate := newGateTransport(surf.Transport, netx.SafeScraperTransport(30*time.Second), jar)
+
 	return &GoyabuClient{
-		client:     util.NewFastClient(),
+		client: &http.Client{
+			// No global timeout: gateTransport bounds each HTTP attempt itself
+			// (httpAttemptTimeout) and gives a browser solve its own, much
+			// larger budget. One cap covering both would have to be either too
+			// short for the solve or too long for a hung request.
+			Transport: gate,
+			Jar:       jar,
+		},
 		baseURL:    goyabuBase,
 		userAgent:  netx.UserAgent,
 		maxRetries: 2,
@@ -147,7 +166,7 @@ func (c *GoyabuClient) SearchAnime(query string) ([]*models.Anime, error) {
 	// Error responses mix string values (e.g. {"error":"no_posts","title":"Sem resultados"})
 	// with the same map shape, so decode to json.RawMessage first and skip non-object entries.
 	var rawMap map[string]json.RawMessage
-	if err := json.Unmarshal(body, &rawMap); err != nil {
+	if err := jsonx.Unmarshal(body, &rawMap); err != nil {
 		util.Debug("Goyabu API parse failed, trying HTML fallback", "error", err)
 		return c.searchAnimeHTML(query)
 	}
@@ -159,7 +178,7 @@ func (c *GoyabuClient) SearchAnime(query string) ([]*models.Anime, error) {
 			continue
 		}
 		var r goyabuSearchResult
-		if err := json.Unmarshal(raw, &r); err != nil {
+		if err := jsonx.Unmarshal(raw, &r); err != nil {
 			continue
 		}
 		if r.Title != "" && r.URL != "" {
@@ -430,12 +449,12 @@ func (c *GoyabuClient) parseEpisodesFromJS(html string) []models.Episode {
 
 		// Try parsing as valid JSON first (Goyabu returns proper JSON)
 		var epData []goyabuEpisode
-		if err := json.Unmarshal([]byte(jsonStr), &epData); err != nil {
+		if err := jsonx.Unmarshal([]byte(jsonStr), &epData); err != nil {
 			// Only if direct parse fails, try cleaning JS notation to JSON:
 			// Convert unquoted keys ({id:1} -> {"id":1}) but skip already-quoted ones
 			cleaned := goyabuUnquotedKeyRe.ReplaceAllString(jsonStr, `$1"$2":`)
 			cleaned = strings.ReplaceAll(cleaned, "'", "\"")
-			if err2 := json.Unmarshal([]byte(cleaned), &epData); err2 != nil {
+			if err2 := jsonx.Unmarshal([]byte(cleaned), &epData); err2 != nil {
 				util.Debug("Goyabu episode JSON parse error", "error", err2)
 				continue
 			}
@@ -656,7 +675,7 @@ func (c *GoyabuClient) extractPlayerData(html string) (token, bloggerURL string)
 			BloggerToken string `json:"blogger_token"`
 			URL          string `json:"url"`
 		}
-		if err := json.Unmarshal([]byte(matches[1]), &players); err == nil && len(players) > 0 {
+		if err := jsonx.Unmarshal([]byte(matches[1]), &players); err == nil && len(players) > 0 {
 			token = players[0].BloggerToken
 			bloggerURL = players[0].URL
 			util.Debug("Extracted playersData", "hasToken", token != "", "hasURL", bloggerURL != "")
@@ -726,7 +745,7 @@ func (c *GoyabuClient) decodeBloggerToken(token string) (string, error) {
 
 	// Try to parse the response as JSON with video URLs
 	var result map[string]any
-	if err := json.Unmarshal(body, &result); err != nil {
+	if err := jsonx.Unmarshal(body, &result); err != nil {
 		// Maybe it returned a direct URL string
 		urlStr := strings.TrimSpace(string(body))
 		if strings.HasPrefix(urlStr, "http") {
@@ -777,7 +796,7 @@ func (c *GoyabuClient) decodeBloggerToken(token string) (string, error) {
 func (c *GoyabuClient) decorateRequest(req *http.Request) {
 	req.Header.Set("User-Agent", c.userAgent)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8")
-	req.Header.Set("Accept-Language", "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7")
+	req.Header.Set("Accept-Language", netx.AcceptLanguage)
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("Referer", c.baseURL+"/")
 }

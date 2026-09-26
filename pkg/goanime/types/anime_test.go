@@ -236,8 +236,7 @@ func TestSourceString(t *testing.T) {
 		in   Source
 		want string
 	}{
-		{SourceAllAnime, "AllAnime"},
-		{SourceAnimeFire, "AnimeFire"},
+		{SourceAnimeFire, "Animefire.io"},
 		{Source(42), "Unknown"},
 	} {
 		if got := tc.in.String(); got != tc.want {
@@ -249,16 +248,13 @@ func TestSourceString(t *testing.T) {
 func TestSourceToScraperType(t *testing.T) {
 	t.Parallel()
 
-	if got := SourceAllAnime.ToScraperType(); got != scraper.AllAnimeType {
-		t.Errorf("SourceAllAnime = %v, want %v", got, scraper.AllAnimeType)
-	}
 	if got := SourceAnimeFire.ToScraperType(); got != scraper.AnimefireType {
 		t.Errorf("SourceAnimeFire = %v, want %v", got, scraper.AnimefireType)
 	}
 	// An unknown value falls back rather than producing a zero scraper type
 	// that would dispatch to nothing.
-	if got := Source(42).ToScraperType(); got != scraper.AllAnimeType {
-		t.Errorf("unknown source = %v, want the AllAnime fallback", got)
+	if got := Source(42).ToScraperType(); got != scraper.AnimefireType {
+		t.Errorf("unknown source = %v, want the AnimeFire fallback", got)
 	}
 }
 
@@ -268,13 +264,7 @@ func TestSourceToScraperType(t *testing.T) {
 func TestParseSourceAcceptsEverySpelling(t *testing.T) {
 	t.Parallel()
 
-	for _, in := range []string{"AllAnime", "allanime", "all"} {
-		got, err := ParseSource(in)
-		if err != nil || got != SourceAllAnime {
-			t.Errorf("ParseSource(%q) = %v, %v; want SourceAllAnime, nil", in, got, err)
-		}
-	}
-	for _, in := range []string{"AnimeFire", "animefire", "fire"} {
+	for _, in := range []string{"AnimeFire", "animefire", "fire", "Animefire.io", "animefire.io"} {
 		got, err := ParseSource(in)
 		if err != nil || got != SourceAnimeFire {
 			t.Errorf("ParseSource(%q) = %v, %v; want SourceAnimeFire, nil", in, got, err)
@@ -285,7 +275,7 @@ func TestParseSourceAcceptsEverySpelling(t *testing.T) {
 func TestParseSourceRejectsUnknown(t *testing.T) {
 	t.Parallel()
 
-	for _, in := range []string{"", "ALLANIME", "goyabu", "AnimeFire "} {
+	for _, in := range []string{"", "AllAnime", "goyabu", "AnimeFire "} {
 		if _, err := ParseSource(in); err == nil {
 			t.Errorf("ParseSource(%q) returned no error; an unrecognised source must not be accepted", in)
 		}

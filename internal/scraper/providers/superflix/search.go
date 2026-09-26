@@ -17,20 +17,26 @@ import (
 // (the upstream JS shows a "not yet released" screen in the same case), not
 // a system or scraping error — callers should surface it to the user as
 
-// NormalizeSuperFlixImageURL converts SuperFlix CloudFront proxy URLs to direct TMDB image URLs.
-// Discord's image proxy cannot handle the double-URL format used by SuperFlix:
+// NormalizeSuperFlixImageURL rewrites a SuperFlix poster URL into a direct TMDB
+// URL at w500. Discord's image proxy cannot handle the double-URL CloudFront
+// format SuperFlix used to serve:
 //
 //	https://d1muf25xaso8hp.cloudfront.net/https://image.tmdb.org/t/p/w342/poster.jpg
 //
-// This extracts the embedded TMDB URL and upgrades to w500 quality:
+// so the embedded TMDB URL is extracted and the thumbnail size upgraded:
 //
 //	https://image.tmdb.org/t/p/w500/poster.jpg
+//
+// The frontend has since dropped the CloudFront proxy and serves the TMDB URL
+// directly — still at w342. Both forms are handled here (idx >= 0, not > 0):
+// gating the upgrade on the CloudFront wrapper being present meant the direct
+// form fell straight through and posters silently dropped to w342.
 func NormalizeSuperFlixImageURL(imageURL string) string {
 	if imageURL == "" {
 		return ""
 	}
 	const tmdbPrefix = "https://image.tmdb.org/t/p/"
-	if idx := strings.Index(imageURL, tmdbPrefix); idx > 0 {
+	if idx := strings.Index(imageURL, tmdbPrefix); idx >= 0 {
 		direct := imageURL[idx:]
 		// Upgrade thumbnail size for Discord display
 		direct = strings.Replace(direct, "/w342/", "/w500/", 1)
@@ -69,8 +75,17 @@ func (c *SuperFlixClient) SearchMediaWithContext(ctx context.Context, query stri
 	if cached, ok := c.searchCache.Load(cacheKey); ok {
 		return cached.([]*SuperFlixMedia), nil
 	}
+	// Then the on-disk one. GoAnime is run as a command, so the in-memory map
+	// above is empty on every invocation — without this, typing the same title
+	// again in a new run costs another request against an endpoint whose
+	// allowance is the thing that breaks searches here. See searchcache.go.
+	if cached, ok := c.diskCache().get(cacheKey); ok {
+		util.Debug("SuperFlix search served from the on-disk cache", "query", normalized, "results", len(cached))
+		c.searchCache.Store(cacheKey, cached)
+		return cached, nil
+	}
 
-	searchURL := fmt.Sprintf("%s/pesquisar?s=%s", c.baseURL, url.QueryEscape(normalized))
+	searchURL := fmt.Sprintf("%s/pesquisar?s=%s", c.base(), url.QueryEscape(normalized))
 	util.Debug("SuperFlix search", "query", query, "normalized", normalized, "url", searchURL)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", searchURL, http.NoBody)
@@ -96,6 +111,7 @@ func (c *SuperFlixClient) SearchMediaWithContext(ctx context.Context, query stri
 
 	results := c.parseCards(doc)
 	c.searchCache.Store(cacheKey, results)
+	c.diskCache().put(cacheKey, results)
 	return results, nil
 }
 

@@ -2,7 +2,6 @@ package superflix
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	neturl "net/url"
 	"regexp"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/alvarorichard/Goanime/internal/util"
+	"github.com/alvarorichard/Goanime/internal/util/jsonx"
 	"github.com/mxschmitt/playwright-go"
 )
 
@@ -27,6 +27,24 @@ var sfEmbedURLRe = regexp.MustCompile(`(?i)src=["']([^"']*\?cfv=[^"']+)["']`)
 // The cfv value is a JWT (base64url segments + dots).
 var sfCfvURLRe = regexp.MustCompile(`https?://[a-zA-Z0-9.\-]+/(?:serie|filme)/[A-Za-z0-9/_\-]+\?cfv=[A-Za-z0-9._\-]+`)
 
+// sfPlainEmbedURLRe is the same box WITHOUT a cfv token.
+//
+// SuperFlix changed the restricted page's "Embed Code" on 2026-09-21 to hand
+// out a bare URL:
+//
+//	<iframe src="https://superflixapi.quest/serie/1405" allow="autoplay *; …">
+//
+// Both patterns above require ?cfv=, so extraction returned "" and the embed
+// recovery never ran — every SuperFlix title then failed with "didn't show an
+// episode list", after a solve that had actually cleared the gate.
+//
+// The token was never what made the read work. Loading the URL inside a genuine
+// cross-origin iframe is: that is what makes the request Sec-Fetch-Site:
+// cross-site, and the server issues a fresh cfv itself. So a bare embed URL is
+// just as usable, and is accepted here as the last resort — after the
+// cfv-bearing forms, which are more specific and identify the box unambiguously.
+var sfPlainEmbedURLRe = regexp.MustCompile(`(?i)<iframe[^>]+src=["'](https?://superflixapi\.[a-z0-9\-]+/(?:serie|filme)/[A-Za-z0-9/_\-]+)["']`)
+
 // extractSuperFlixEmbedURL pulls the player embed URL out of the restricted
 // page HTML. It first tries a live iframe attribute, then falls back to a raw
 // URL scan after unescaping the HTML entities the EMBED CODE box uses.
@@ -35,6 +53,10 @@ func extractSuperFlixEmbedURL(rawHTML string) string {
 	for _, r := range []struct{ from, to string }{
 		{"&amp;", "&"}, {"&#38;", "&"},
 		{"&quot;", `"`}, {"&#34;", `"`}, {"&#039;", "'"}, {"&#39;", "'"},
+		{"&lt;", "<"}, {"&#60;", "<"}, {"&gt;", ">"}, {"&#62;", ">"},
+		// The same snippet also appears JSON-escaped elsewhere on the page:
+		//   src=\"https:\/\/superflixapi.quest\/serie\/1405\"
+		{`\/`, "/"}, {`\"`, `"`},
 	} {
 		s = strings.ReplaceAll(s, r.from, r.to)
 	}
@@ -43,6 +65,9 @@ func extractSuperFlixEmbedURL(rawHTML string) string {
 	}
 	if u := sfCfvURLRe.FindString(s); u != "" {
 		return u
+	}
+	if m := sfPlainEmbedURLRe.FindStringSubmatch(s); len(m) >= 2 {
+		return m[1]
 	}
 	return ""
 }
@@ -73,7 +98,7 @@ func readEmbeddedPlayer(ctx context.Context, page playwright.Page, embedURL stri
 	}
 	if err := page.SetContent(wrapper, playwright.PageSetContentOptions{
 		WaitUntil: playwright.WaitUntilStateLoad,
-		Timeout:   playwright.Float(float64(loadBudget.Milliseconds())),
+		Timeout:   new(float64(loadBudget.Milliseconds())),
 	}); err != nil {
 		return "", fmt.Errorf("set iframe wrapper: %w", err)
 	}
@@ -129,6 +154,94 @@ type CFStreamResult struct {
 	VideoHash  string // 32-hex warezcdn content id
 }
 
+// playerRefererFor builds the Referer the CDN requires for a signed stream URL:
+// the player's own /video/<hash> page, NOT the player host's root.
+//
+// The distinction is not cosmetic — it decides whether anything plays at all.
+// Verified live 2026-08-26 against a freshly signed master.txt, two requests:
+//
+//	Referer: https://<player>/                 -> 403 Forbidden
+//	Referer: https://<player>/video/<hash>     -> 200 OK
+//
+// The browser sends the full path because the player document IS
+// /video/<hash> and the request is same-origin; under the default
+// strict-origin-when-cross-origin policy only the CROSS-origin segment
+// fetches fall back to the bare origin. Sending the bare origin for the
+// same-origin playlist fetch is a request no real player ever makes, and the
+// CDN rejects it.
+//
+// With the root Referer the damage landed before mpv ever started:
+// streamURLDead probes the signed URL with this exact value and maps 403 to
+// "host rotated out", so a perfectly good solve was discarded as a dead host.
+//
+// hash is empty only on the raw-media fallback capture (no getVideo URL to
+// read it from); there the origin is the best available guess.
+func playerRefererFor(playerHost, hash string) string {
+	playerHost = strings.TrimSuffix(playerHost, "/")
+	if playerHost == "" {
+		return ""
+	}
+	if hash == "" {
+		return playerHost + "/"
+	}
+	return playerHost + "/video/" + hash
+}
+
+// sfPlayerVideoPageRe matches a player's own document URL,
+// https://<player-host>/video/<hash>, and captures the two halves.
+var sfPlayerVideoPageRe = regexp.MustCompile(`^(https?://[^/]+)/video/([0-9a-zA-Z]+)`)
+
+// playerIdentityFromReferer recovers the (playerHost, videoHash) pair from the
+// Referer a media request carried.
+//
+// The pair is normally read off the getVideo XHR
+// (…/player/index.php?data=<hash>&do=getVideo), but as of 2026-08-31 the
+// current player no longer calls getVideo at all — its /video/<hash> document
+// fetches master.txt directly. The raw-media fallback still captures that
+// request, and its Referer IS the player document, so the same two facts are
+// recoverable from it. Without this the pair stayed empty, which cost the
+// stream cache (every play re-solved through the browser) and left
+// getStreamViaBrowser reporting a blank player host.
+func playerIdentityFromReferer(referer string) (playerHost, videoHash string) {
+	m := sfPlayerVideoPageRe.FindStringSubmatch(referer)
+	if m == nil {
+		return "", ""
+	}
+	return m[1], m[2]
+}
+
+// fallbackGraceFor reports how long to keep waiting for a getVideo capture
+// before settling for the raw media URL sniffed off the player's own traffic.
+//
+// getVideo is preferred only because it names the player host and content hash
+// that the raw capture used to lack. Once the capture's Referer is a
+// /video/<hash> page those are already known (playerIdentityFromReferer), so
+// there is nothing left to wait for.
+func fallbackGraceFor(fallbackReferer string) time.Duration {
+	if host, hash := playerIdentityFromReferer(fallbackReferer); host != "" && hash != "" {
+		return 0
+	}
+	return 8 * time.Second
+}
+
+// bloggerFrameURL returns the URL of a Blogger video page loaded in any of the
+// page's frames, or "" when none is.
+//
+// A Blogger-hosted title is invisible to the media sniffer: its player fetches
+// the stream through a batchexecute RPC and never issues a request matching
+// sfDirectMediaRe, so the sniff would run out its full budget (90s, retried
+// once) and fail on a title that plays fine. The player document itself is the
+// stream reference — the player layer resolves it — so finding the frame IS
+// finding the stream.
+func bloggerFrameURL(page playwright.Page) string {
+	for _, fr := range page.Frames() {
+		if isBloggerPlayerURL(fr.URL()) {
+			return fr.URL()
+		}
+	}
+	return ""
+}
+
 // sfMediaRe matches the network requests that carry the actual video (HLS
 // playlist, MP4, or the players' getVideo/securedLink endpoints).
 var sfMediaRe = regexp.MustCompile(`(?i)\.m3u8(\?|$|#)|\.mp4(\?|$|#)|/getVideo|videoSource|securedLink|/hls/|master\.txt`)
@@ -146,12 +259,16 @@ var sfMediaRe = regexp.MustCompile(`(?i)\.m3u8(\?|$|#)|\.mp4(\?|$|#)|/getVideo|v
 // Foundation: returns the first matching media URL. Some providers need extra
 // play interaction or de-obfuscation that can be layered on later.
 func (s *cfBrowserSolver) SniffStream(ctx context.Context, embedURL string, timeout time.Duration) (*CFStreamResult, error) {
-	bctx, err := s.init()
+	if err := s.browserWorkGate.lock(ctx); err != nil {
+		return nil, err
+	}
+	defer s.browserWorkGate.unlock()
+
+	bctx, release, err := s.acquire()
 	if err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer release()
 
 	if timeout <= 0 {
 		timeout = 120 * time.Second
@@ -161,6 +278,14 @@ func (s *cfBrowserSolver) SniffStream(ctx context.Context, embedURL string, time
 	if err != nil {
 		return nil, fmt.Errorf("create page: %w", err)
 	}
+	// This page is ours, so we close it. SniffEmbedStream already did; this one
+	// did not, so every sniff left a tab behind in a context that outlives the
+	// call — and a context with tabs left in it is a window left on screen.
+	defer func() {
+		forgetRevealedPage(page)
+		_ = page.Close()
+	}()
+	hideSolverWindow(page, bctx)
 
 	var mu sync.Mutex
 	var hitURL, hitRef, hitUA string
@@ -203,7 +328,15 @@ func (s *cfBrowserSolver) SniffStream(ctx context.Context, embedURL string, time
 		return nil, fmt.Errorf("load embed iframe: %w", err)
 	}
 
+	// Disarm the ad traps for the length of the sniff, so the play overlay
+	// below is safe to click. See popunder.go.
+	guard := &popunderGuard{}
+	defer guard.install(page, bctx)()
+
 	deadline := time.Now().Add(timeout)
+	// Muted autoplay gets the first few rounds to itself; the overlay click is
+	// the escalation for a player that ignores it, which is every movie.
+	overlayAfter := time.Now().Add(overlayClickAfter)
 	for time.Now().Before(deadline) {
 		mu.Lock()
 		got := hitURL
@@ -211,7 +344,7 @@ func (s *cfBrowserSolver) SniffStream(ctx context.Context, embedURL string, time
 		if got != "" {
 			break
 		}
-		triggerPlay(page)
+		triggerPlay(page, time.Now().After(overlayAfter))
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -228,7 +361,8 @@ func (s *cfBrowserSolver) SniffStream(ctx context.Context, embedURL string, time
 	if hitUA == "" {
 		hitUA = SuperFlixUserAgent
 	}
-	util.Debug("SuperFlix sniffed stream", "url", hitURL, "referer", hitRef)
+	util.Debug("SuperFlix sniffed stream", "url", hitURL, "referer", hitRef,
+		"popundersBlocked", guard.blocked())
 	return &CFStreamResult{StreamURL: hitURL, Referer: hitRef, UserAgent: hitUA}, nil
 }
 
@@ -262,7 +396,7 @@ var sfGetVideoRe = regexp.MustCompile(`(?i)/player/index\.php\?.*do=getVideo`)
 // it feeds SniffEmbedStream's last-resort capture below.
 var sfDirectMediaRe = regexp.MustCompile(`(?i)\.m3u8(\?|$|#)|\.mp4(\?|$|#)|/hls/|master\.txt`)
 
-// SniffEmbedStream loads a SuperFlix embed URL (e.g. https://superflixapi.pro/
+// SniffEmbedStream loads a SuperFlix embed URL (e.g. https://superflixapi.sbs/
 // filme/1048794 or /serie/76479/1/1) inside a genuine cross-origin iframe so it
 // runs in iframe Sec-Fetch context (how the embed is meant to be served), lets
 // the persistent profile auto-clear Turnstile, then captures the player's
@@ -279,12 +413,16 @@ var sfDirectMediaRe = regexp.MustCompile(`(?i)\.m3u8(\?|$|#)|\.mp4(\?|$|#)|/hls/
 const restrictedShellGrace = 12 * time.Second
 
 func (s *cfBrowserSolver) SniffEmbedStream(ctx context.Context, embedURL string, timeout time.Duration) (*CFStreamResult, error) {
-	bctx, err := s.init()
+	if err := s.browserWorkGate.lock(ctx); err != nil {
+		return nil, err
+	}
+	defer s.browserWorkGate.unlock()
+
+	bctx, release, err := s.acquire()
 	if err != nil {
 		return nil, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer release()
 
 	if timeout <= 0 {
 		timeout = 90 * time.Second
@@ -294,12 +432,16 @@ func (s *cfBrowserSolver) SniffEmbedStream(ctx context.Context, embedURL string,
 	if err != nil {
 		return nil, fmt.Errorf("create page: %w", err)
 	}
-	defer func() { _ = page.Close() }()
+	defer func() {
+		forgetRevealedPage(page)
+		_ = page.Close()
+	}()
 	// Onscreen during the solve — Turnstile only auto-passes when the page truly
 	// renders (headless & offscreen both stall it). Close only this tab afterwards:
 	// keeping the persistent context alive retains Chromium's process, connection
 	// pools and first-party challenge state for the next episode. Re-launching the
 	// whole context here was the largest avoidable delay between plays.
+	hideSolverWindow(page, bctx)
 	moveWindow(page, 60, 60)
 
 	// Close ad popunders the embed spawns via window.open so they don't steal the
@@ -328,15 +470,34 @@ func (s *cfBrowserSolver) SniffEmbedStream(ctx context.Context, embedURL string,
 			return
 		}
 		mu.Lock()
-		if fbURL == "" {
+		claimed := fbURL == ""
+		if claimed {
 			fbURL = u
 			fbAt = time.Now()
-			if h, hErr := r.AllHeaders(); hErr == nil {
-				fbRef = h["referer"]
-				fbUA = h["user-agent"]
-			}
 		}
 		mu.Unlock()
+		if !claimed {
+			return
+		}
+		// AllHeaders() is a protocol round-trip, and this handler runs on
+		// Playwright's dispatch goroutine — the one that reads every message
+		// off the driver pipe. Calling it inline blocks the driver waiting on
+		// itself: observed hanging the whole sniff until the test timeout
+		// (280s) rather than failing. Same rule the OnPopup and OnResponse
+		// handlers above already follow.
+		go func() {
+			h, hErr := r.AllHeaders()
+			if hErr != nil {
+				return
+			}
+			mu.Lock()
+			fbRef, fbUA = h["referer"], h["user-agent"]
+			mu.Unlock()
+			select {
+			case found <- struct{}{}:
+			default:
+			}
+		}()
 	})
 
 	page.OnResponse(func(resp playwright.Response) {
@@ -351,12 +512,14 @@ func (s *cfBrowserSolver) SniffEmbedStream(ctx context.Context, embedURL string,
 				return
 			}
 			var gv getVideoResponse
-			if json.Unmarshal(body, &gv) != nil {
+			if jsonx.Unmarshal(body, &gv) != nil {
 				return
 			}
-			// securedLink currently points at a dead signed master.m3u8 (nginx
-			// 403), while videoSource is the working unsigned master.txt HLS.
-			// Prefer the source the upstream player itself exposes as fallback.
+			// As of 2026-08-26 the player returns the SAME master.txt URL in
+			// both fields, so the choice no longer matters in practice — but it
+			// did (securedLink was a dead signed master.m3u8 while videoSource
+			// worked), and the fields can diverge again on the next rotation.
+			// Keep preferring videoSource: it is what the player itself plays.
 			link := preferredGetVideoURL(gv)
 			if link == "" {
 				return
@@ -369,8 +532,8 @@ func (s *cfBrowserSolver) SniffEmbedStream(ctx context.Context, embedURL string,
 				// only browser-gated facts — cache them for browser-free replays.
 				if pu, pErr := neturl.Parse(u); pErr == nil {
 					playerHost = pu.Scheme + "://" + pu.Host
-					referer = playerHost + "/"
 					videoHash = pu.Query().Get("data")
+					referer = playerRefererFor(playerHost, videoHash)
 				}
 				select {
 				case found <- struct{}{}:
@@ -393,11 +556,12 @@ func (s *cfBrowserSolver) SniffEmbedStream(ctx context.Context, embedURL string,
 	// a failed warm-up fail within the advertised sniff budget instead of adding
 	// another 45 seconds before that budget even begins.
 	deadline := time.Now().Add(timeout)
-	warmBudget := timeout / 3
-	if warmBudget > 20*time.Second {
-		warmBudget = 20 * time.Second
-	}
-	warmGateTopLevel(page, embedURL, warmBudget)
+	warmBudget := min(timeout/3, 20*time.Second)
+	warmGateTopLevel(page, bctx, embedURL, warmBudget)
+	// A navigation un-minimizes the window (the same reflex that dragged an
+	// offscreen one back onto the desktop), so hiding has to be re-asserted
+	// after every one of them.
+	hideSolverWindow(page, bctx)
 
 	// Phase 1 — SAME-ORIGIN (fast path). Navigate the parent to warezcdn's own
 	// (ungated) homepage and inject the player as a same-origin iframe so it reuses
@@ -406,6 +570,7 @@ func (s *cfBrowserSolver) SniffEmbedStream(ctx context.Context, embedURL string,
 	if err := injectEmbedSameOrigin(page, embedURL); err != nil {
 		return nil, err
 	}
+	hideSolverWindow(page, bctx)
 	if v, uErr := page.Evaluate("() => navigator.userAgent"); uErr == nil {
 		if str, ok := v.(string); ok {
 			ua = str
@@ -423,27 +588,56 @@ func (s *cfBrowserSolver) SniffEmbedStream(ctx context.Context, embedURL string,
 	// foreground + a little pointer movement) which, with the stealthed fingerprint,
 	// is what tips a managed challenge into auto-passing without interaction.
 	recovered := false
+	// Past this point a hidden solve has clearly stalled, so the window is
+	// handed to the user rather than failing silently behind their back.
+	revealAt := time.Now().Add(offscreenRevealAfter)
+	// Same pair as SniffStream: disarm the ad traps, then let the overlay be
+	// clicked once muted autoplay has had its rounds. This is the path a movie
+	// takes, and the one measured spending its whole 90s budget capturing
+	// nothing while the player sat unstarted.
+	guard := &popunderGuard{}
+	defer guard.install(page, bctx)()
+	overlayAfter := time.Now().Add(overlayClickAfter)
 	embedSeen := false // have we ever observed a live embed frame?
 	var restrictedSince time.Time
-	_ = page.BringToFront() // surface the solve window once so the challenge renders/focuses
+	focusSolverPage(page) // surface the solve window once (no-op while hidden)
 
 	for time.Now().Before(deadline) {
 		mu.Lock()
 		got := streamURL
-		// Adopt the raw media URL only after getVideo has had a grace period
-		// to deliver the preferred signed link — the media request fires right
+		// Adopt the raw media URL once getVideo has had its grace period to
+		// deliver the preferred signed link — the media request fires right
 		// after getVideo answers, so if getVideo capture works it always wins.
-		if got == "" && fbURL != "" && time.Since(fbAt) > 8*time.Second {
+		//
+		// The grace collapses to nothing as soon as the captured Referer is a
+		// player /video/<hash> page, because then the fallback already carries
+		// everything getVideo would have added (player host, content hash, the
+		// exact Referer). Waiting the full 8s in that case buys nothing and
+		// costs 8s on EVERY play — which is what the current player does, since
+		// its getVideo endpoint is gone and the grace could only ever expire.
+		if got == "" && fbURL != "" && time.Since(fbAt) > fallbackGraceFor(fbRef) {
 			streamURL = fbURL
 			referer = fbRef
+			playerHost, videoHash = playerIdentityFromReferer(fbRef)
 			if ua == "" {
 				ua = fbUA
 			}
 			got = streamURL
-			util.Debug("SuperFlix getVideo capture missed; adopting raw media URL sniffed from player traffic", "url", fbURL)
+			util.Debug("SuperFlix getVideo capture missed; adopting raw media URL sniffed from player traffic",
+				"url", fbURL, "host", playerHost, "hash", videoHash)
 		}
 		mu.Unlock()
 		if got != "" {
+			break
+		}
+
+		// A Blogger-hosted title emits no media request at all, so the capture
+		// above can never fire. Its player document is the stream reference.
+		if bu := bloggerFrameURL(page); bu != "" {
+			mu.Lock()
+			streamURL, referer, playerHost, videoHash = bu, "", "", ""
+			mu.Unlock()
+			util.Debug("SuperFlix sniff: Blogger player detected; using its video page as the stream", "url", bu)
 			break
 		}
 
@@ -473,6 +667,7 @@ func (s *cfBrowserSolver) SniffEmbedStream(ctx context.Context, embedURL string,
 			if err := injectEmbedCrossOrigin(page, embedURL); err != nil {
 				util.Debug("SuperFlix cross-origin re-inject failed", "err", err)
 			}
+			hideSolverWindow(page, bctx)
 		}
 
 		// Fast bail on the restricted shell: the cross-origin embed read got a grace
@@ -492,7 +687,27 @@ func (s *cfBrowserSolver) SniffEmbedStream(ctx context.Context, embedURL string,
 		// completes it with no human.
 		humanize(page)
 		clickTurnstile(page)
-		triggerPlay(page)
+		// The embed raises the window when it finishes loading, which happens
+		// inside this loop rather than during one of our navigations. Put it
+		// back down (issue #202); no-op once the window was deliberately
+		// revealed for manual verification.
+		keepSolverWindowHidden(page, bctx)
+		// The widget can fail to load rather than demand a checkbox; then the
+		// page's own retry button is the only way forward — and a hidden window
+		// has to come out so the user can take over.
+		if clickChallengeRetry(page) {
+			revealSolverWindow(page, bctx, "challenge reported a load failure")
+		}
+		// Hand the window over only when the wait is one a human can end. Past
+		// the gate the page just needs time to emit its media request, and a
+		// cold profile can cross this timer while doing exactly that — popping
+		// a captcha prompt there asks the user to solve something that is not
+		// on screen, which is how "the captcha stopped solving itself" gets
+		// reported for a solve that was working.
+		if time.Now().After(revealAt) && challengeVisible(page) {
+			revealSolverWindow(page, bctx, "a challenge is still on screen and has not cleared on its own")
+		}
+		triggerPlay(page, time.Now().After(overlayAfter))
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -508,10 +723,12 @@ func (s *cfBrowserSolver) SniffEmbedStream(ctx context.Context, embedURL string,
 		// nothing better is coming, so take what it played.
 		streamURL = fbURL
 		referer = fbRef
+		playerHost, videoHash = playerIdentityFromReferer(fbRef)
 		if ua == "" {
 			ua = fbUA
 		}
-		util.Debug("SuperFlix getVideo capture missed; adopting raw media URL sniffed from player traffic", "url", fbURL)
+		util.Debug("SuperFlix getVideo capture missed; adopting raw media URL sniffed from player traffic",
+			"url", fbURL, "host", playerHost, "hash", videoHash)
 	}
 	if streamURL == "" {
 		return nil, fmt.Errorf("no getVideo stream captured within %s", timeout)
@@ -519,7 +736,8 @@ func (s *cfBrowserSolver) SniffEmbedStream(ctx context.Context, embedURL string,
 	if ua == "" {
 		ua = SuperFlixUserAgent
 	}
-	util.Debug("SuperFlix sniffed embed stream", "url", streamURL, "referer", referer, "host", playerHost, "hash", videoHash)
+	util.Debug("SuperFlix sniffed embed stream", "url", streamURL, "referer", referer,
+		"host", playerHost, "hash", videoHash, "popundersBlocked", guard.blocked())
 	return &CFStreamResult{
 		StreamURL:  streamURL,
 		Referer:    referer,

@@ -61,45 +61,6 @@ func TestDownloadDirectHTTPWithClientDownloadsMockVideoAndTracksProgress(t *test
 	assert.Equal(t, int64(len(payload)), received)
 }
 
-func TestDownloadPartAddsAllAnimeReferer(t *testing.T) {
-	payload := []byte("goanime")
-	var gotReferer string
-	var gotRange string
-
-	client := &http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			gotReferer = req.Header.Get("Referer")
-			gotRange = req.Header.Get("Range")
-
-			return &http.Response{
-				StatusCode: http.StatusPartialContent,
-				Status:     "206 Partial Content",
-				Header:     make(http.Header),
-				Body:       io.NopCloser(bytes.NewReader(payload)),
-				Request:    req,
-			}, nil
-		}),
-	}
-
-	outPath := filepath.Join(t.TempDir(), "episode.mp4")
-	err := downloadPart(
-		"https://allanime.day/video/episode.mp4",
-		0,
-		int64(len(payload)-1),
-		0,
-		client,
-		outPath,
-		&model{},
-	)
-	require.NoError(t, err)
-	assert.Equal(t, "https://allanime.to", gotReferer)
-	assert.Equal(t, "bytes=0-6", gotRange)
-
-	got, err := os.ReadFile(outPath + ".part0")
-	require.NoError(t, err)
-	assert.Equal(t, payload, got)
-}
-
 func TestDownloadPartStopsAfterRepeatedRequestErrors(t *testing.T) {
 	restore := setDownloadPartRetryDelayForTest(0)
 	defer restore()
@@ -166,78 +127,6 @@ func setDownloadPartRetryDelayForTest(delay time.Duration) func() {
 	return func() {
 		downloadPartRetryDelay = original
 	}
-}
-
-func TestGetContentLengthAddsAllAnimeReferer(t *testing.T) {
-	const contentLength = "12345"
-	var gotMethod string
-	var gotReferer string
-
-	client := &http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			gotMethod = req.Method
-			gotReferer = req.Header.Get("Referer")
-
-			header := make(http.Header)
-			header.Set("Content-Length", contentLength)
-
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Status:     "200 OK",
-				Header:     header,
-				Body:       io.NopCloser(strings.NewReader("")),
-				Request:    req,
-			}, nil
-		}),
-	}
-
-	got, err := getContentLength("https://allanime.day/video/episode.mp4", client)
-	require.NoError(t, err)
-	assert.Equal(t, int64(12345), got)
-	assert.Equal(t, http.MethodHead, gotMethod)
-	assert.Equal(t, "https://allanime.to", gotReferer)
-}
-
-func TestGetContentLengthFallbackKeepsAllAnimeReferer(t *testing.T) {
-	var gotRequests []string
-	var gotReferers []string
-	var gotRanges []string
-
-	client := &http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			gotRequests = append(gotRequests, req.Method)
-			gotReferers = append(gotReferers, req.Header.Get("Referer"))
-			gotRanges = append(gotRanges, req.Header.Get("Range"))
-
-			if req.Method == http.MethodHead {
-				return &http.Response{
-					StatusCode: http.StatusMethodNotAllowed,
-					Status:     "405 Method Not Allowed",
-					Header:     make(http.Header),
-					Body:       io.NopCloser(strings.NewReader("")),
-					Request:    req,
-				}, nil
-			}
-
-			header := make(http.Header)
-			header.Set("Content-Length", "1")
-
-			return &http.Response{
-				StatusCode: http.StatusPartialContent,
-				Status:     "206 Partial Content",
-				Header:     header,
-				Body:       io.NopCloser(strings.NewReader("x")),
-				Request:    req,
-			}, nil
-		}),
-	}
-
-	got, err := getContentLength("https://allanime.pro/video/episode.mp4", client)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), got)
-	assert.Equal(t, []string{http.MethodHead, http.MethodGet}, gotRequests)
-	assert.Equal(t, []string{"https://allanime.to", "https://allanime.to"}, gotReferers)
-	assert.Equal(t, []string{"", "bytes=0-0"}, gotRanges)
 }
 
 func TestDownloadAnimeFireDirectWithFallbackSetsDefaultReferer(t *testing.T) {
@@ -375,6 +264,16 @@ func TestHandleBatchDownloadRangeReturnsBatchErrorForAnimeFireNoStream(t *testin
 	restore := installDownloadRangeTestState(outputDir)
 	defer restore()
 
+	// AnimeFire is read through its JSON API now, so the stand-in has to be the
+	// API, not a page. Without pointing the client here the resolution would
+	// reach the live api.animefire.one — a unit test must not depend on it.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"streams":[]}}`))
+	}))
+	defer server.Close()
+	t.Setenv("GOANIME_ANIMEFIRE_API", server.URL)
+
 	SetAnimeName("JUJUTSU KAISEN Season 2", 2)
 	SetExactMediaType(string(models.MediaTypeAnime))
 	SetMediaMeta(&util.MediaMeta{Year: "2023", AnilistID: 145064, MalID: 51009})
@@ -402,6 +301,14 @@ func TestHandleBatchDownloadRangeReturnsBatchErrorForAnimeFireNoStream(t *testin
 	assert.Equal(t, 1, batchErr.Failures[0].Episode)
 	assert.Contains(t, err.Error(), "1 episode failed")
 	assert.Contains(t, err.Error(), "failed to resolve stream")
+	// The old assertion pinned the HTML parser's wording ("no video source found
+	// in the page"), which went away with the API port. What matters is that the
+	// failure names the source that could not resolve it and says why.
+	assert.Contains(t, err.Error(), "Animefire.io")
+	// AnimeFire lists episodes it has no file for (is_offline, null url). That
+	// is content state, and the message now says so instead of blaming a parser
+	// for something the source never had.
+	assert.Contains(t, err.Error(), "no file for this episode")
 
 	var mp4s []string
 	walkErr := filepath.Walk(outputDir, func(path string, info os.FileInfo, err error) error {

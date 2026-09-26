@@ -124,7 +124,7 @@ func Sources() []SourceInfo {
 
 // languageOf mirrors providers.languageTag, which is unexported.
 func languageOf(kind source.SourceKind) string {
-	if kind == source.AllAnime {
+	if kind == source.HiAnime {
 		return "EN"
 	}
 	return "PT-BR"

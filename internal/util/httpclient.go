@@ -298,8 +298,8 @@ func ParallelExecute(maxWorkers int, tasks ...func()) {
 var knownHosts = []string{
 	"graphql.anilist.co:443",
 	"api.jikan.moe:443",
-	"allanime.day:443",
 	"api.animefire.one:443",
+	"hianime.at:443",
 	"kitsu.app:443",
 }
 
@@ -313,9 +313,7 @@ func PreWarmConnections() {
 	preWarmOnce.Do(func() {
 		client := GetFastClient()
 		for _, host := range knownHosts {
-			preWarmWG.Add(1)
-			go func() {
-				defer preWarmWG.Done()
+			preWarmWG.Go(func() {
 				// GET request with short timeout — triggers full TCP+TLS handshake
 				// to populate the connection pool. HEAD may not establish full TLS.
 				req, err := http.NewRequest("GET", "https://"+host, http.NoBody)
@@ -332,7 +330,7 @@ func PreWarmConnections() {
 				_, _ = io.Copy(io.Discard, resp.Body)
 				_ = resp.Body.Close()
 				Debugf("Pre-warmed connection to %s", host)
-			}()
+			})
 		}
 	})
 }

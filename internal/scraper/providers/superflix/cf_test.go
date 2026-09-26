@@ -48,8 +48,24 @@ func TestIsCloudflareChallenge(t *testing.T) {
 		{"403 HTML treated as challenge", 403, `<html><body>blocked</body></html>`, nil, true},
 		{"503 HTML treated as challenge", 503, `<html>maintenance</html>`, nil, true},
 		{"cf-mitigated header forces challenge", 200, `{}`, map[string]string{"cf-mitigated": "challenge"}, true},
-		{"body contains challenge-platform path", 200, `<script src="/cdn-cgi/challenge-platform/foo.js"></script>`, nil, true},
-		{"body contains turnstile script", 200, `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script>`, nil, true},
+		{"body contains the interstitial orchestrate path", 200, `<script src="/cdn-cgi/challenge-platform/h/g/orchestrate/jsch/v1"></script>`, nil, true},
+		// Cloudflare injects this passive bot-telemetry snippet into ordinary
+		// responses it proxies. It is not an interstitial, and treating it as
+		// one sent dead pages to the headed browser solver.
+		{"passive jsd telemetry snippet is not a challenge", 200, `<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>`, nil, false},
+		// The real 404 the SuperFlix player host serves for a retired hash:
+		// a plain Apache error page with Cloudflare's telemetry snippet appended.
+		{"404 player page is dead, not challenged", 404, deadPlayerPage404, nil, false},
+		// The Turnstile SCRIPT is not a challenge, and this case used to assert
+		// that it was. SuperFlix's login modal mounts a Turnstile, so from
+		// 2026-09-24 that tag shipped on every page and every search was
+		// classified as a captcha block — the source vanished from the fan-out
+		// while curl got 200 and three results. A page that can render the
+		// widget is not a page that is one; the gates carry cf_chl_opt,
+		// __cf_chl_, "Just a moment" or cf-turnstile-form, and those still
+		// match below. See challenge_falsepositive_test.go for the real page.
+		{"turnstile script alone is not a challenge", 200, `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script>`, nil, false},
+		{"superflix's own turnstile gate is", 200, `<html><head><title>Verificação</title></head><body><form id="cf-turnstile-form"></form></body></html>`, nil, true},
 		{"body contains cf_chl_opt", 200, `var cf_chl_opt = {};`, nil, true},
 		{"body contains Just a moment", 200, `<title>Just a moment...</title>`, nil, true},
 		{"body contains __cf_chl_", 200, `window.__cf_chl_tk = "abc";`, nil, true},
@@ -513,17 +529,19 @@ func TestCFBrowserSolver_Close(t *testing.T) {
 }
 
 // TestCFBrowserSolver_CloseDoesNotBlockOnSolve guards the SIGINT-shutdown fix:
-// Close() must use lifeMu, not the solve mutex mu, so it can tear the browser
-// down while a solve still holds mu. If Close ever takes mu again, killing the
-// app mid-solve would hang for the whole solve budget (~90s) and the Playwright
-// driver would EPIPE-crash.
+// Close() must use lifeMu, not browserWorkGate, so it can tear the browser down
+// while a solve still holds the browser gate. If Close ever takes that gate,
+// killing the app mid-solve would hang for the whole solve budget (~90s) and the
+// Playwright driver would EPIPE-crash.
 func TestCFBrowserSolver_CloseDoesNotBlockOnSolve(t *testing.T) {
 	t.Parallel()
 	s := &cfBrowserSolver{}
 
-	// Simulate an in-flight solve holding the solve mutex.
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	// Simulate an in-flight solve holding the browser gate.
+	if err := s.browserWorkGate.lock(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	defer s.browserWorkGate.unlock()
 
 	done := make(chan struct{})
 	go func() {
@@ -533,9 +551,9 @@ func TestCFBrowserSolver_CloseDoesNotBlockOnSolve(t *testing.T) {
 
 	select {
 	case <-done:
-		// Close returned without waiting on mu — correct.
+		// Close returned without waiting on the browser gate — correct.
 	case <-time.After(2 * time.Second):
-		t.Fatal("Close blocked while a solve held mu — shutdown would hang on SIGINT")
+		t.Fatal("Close blocked while a solve held the browser gate — shutdown would hang on SIGINT")
 	}
 }
 
@@ -562,3 +580,17 @@ func TestCFBrowserSolver_Solve(t *testing.T) {
 	assert.Contains(t, res.HTML, "Example Domain")
 	assert.NotEmpty(t, res.UserAgent)
 }
+
+// deadPlayerPage404 is a verbatim capture (2026-08-25) of what the rotated-out
+// SuperFlix player host answers for /video/<hash>: a plain Apache 404 with
+// Cloudflare's passive JS-detection snippet injected. Classifying this as a
+// challenge made the browser solver sit on it until the sniff timed out.
+const deadPlayerPage404 = `<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">
+<html><head>
+<title>404 Not Found</title>
+</head><body>
+<h1>Not Found</h1>
+<p>The requested URL was not found on this server.</p>
+<p>Additionally, a 404 Not Found
+error was encountered while trying to use an ErrorDocument to handle the request.</p>
+<script>(function(){function c(){var b=a.contentDocument||(a.contentWindow&&a.contentWindow.document);if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'a308972d3f9e6d53',t:'MTc4NzYzOTg3MQ=='};var a=document.createElement('script');a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}})();</script></body></html>`

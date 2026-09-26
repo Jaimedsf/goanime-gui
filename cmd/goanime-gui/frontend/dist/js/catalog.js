@@ -255,7 +255,7 @@ function buildCatalogCard(item) {
 //
 // Two details matter here. It searches "all" rather than the header
 // dropdown: that dropdown persists between sessions, so a user who once
-// picked AllAnime would get English-only results from every catalog click,
+// picked HiAnime would get English-only results from every catalog click,
 // with no hint why. And it goes through SearchTitles, which tries the
 // romaji, English and display names together — the PT-BR sources often
 // index the localised name, so a romaji-only query can miss them.

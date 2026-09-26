@@ -82,6 +82,11 @@ func init() {
 // ones. Per-source failures are logged and tolerated — a result is returned as
 // long as at least one source succeeds.
 func SearchAll(ctx context.Context, query string, kinds ...source.SourceKind) ([]*models.Anime, error) {
+	// Undo the slugging both input paths apply before anything sees the query.
+	// See query.go: three of the four sources found nothing for every
+	// multi-word search because of it.
+	query = normalizeSearchQuery(query)
+
 	want := map[source.SourceKind]bool{}
 	for _, k := range kinds {
 		want[k] = true
@@ -130,14 +135,14 @@ func SearchAll(ctx context.Context, query string, kinds ...source.SourceKind) ([
 		// not they matched anything. It is what separates "nothing carries
 		// this title" from "we never got a usable answer" — see finishSearch.
 		answered   int
-		errs       []error
+		failures   []SourceFailure
 		graceTimer <-chan time.Time
 	)
 	for {
 		select {
 		case res, ok := <-resultChan:
 			if !ok {
-				return finishSearch(query, answered, all, errs)
+				return finishSearch(query, len(searchers), answered, all, failures)
 			}
 			if res.err != nil {
 				// Feed the breaker so a repeatedly-failing source opens.
@@ -146,7 +151,17 @@ func SearchAll(ctx context.Context, query string, kinds ...source.SourceKind) ([
 					util.Warn("search source circuit opened", "source", res.kind, "diagnostic", diag.UserMessage())
 				}
 				util.Debug("search source failed", "source", res.kind, "error", res.err)
-				errs = append(errs, fmt.Errorf("%s: %w", res.kind, res.err))
+				// Record the failure as DATA. The raw error stays attached for
+				// errors.Is and the debug log; the short reason is what a person
+				// sees. Flattening both into one string is how the message grew
+				// into three repetitions of the same fact.
+				reason, limited := describeFailure(diag, res.err)
+				failures = append(failures, SourceFailure{
+					Kind:        res.kind,
+					Reason:      reason,
+					RateLimited: limited,
+					Err:         fmt.Errorf("%s: %w", res.kind, res.err),
+				})
 				continue
 			}
 			searchBreaker.RecordSuccess(string(res.kind))
@@ -160,10 +175,10 @@ func SearchAll(ctx context.Context, query string, kinds ...source.SourceKind) ([
 			}
 		case <-graceTimer:
 			util.Debug("straggler grace elapsed; returning collected search results")
-			return finishSearch(query, answered, all, errs)
+			return finishSearch(query, len(searchers), answered, all, failures)
 		case <-ctx.Done():
 			util.Debug("search timeout reached; returning collected results")
-			return finishSearch(query, answered, all, errs)
+			return finishSearch(query, len(searchers), answered, all, failures)
 		}
 	}
 }
@@ -202,6 +217,29 @@ func searchOneWithTimeout(parent context.Context, a activeSearcher, query string
 	}
 }
 
+// reportPartialFailure says which sources did not answer a search that still
+// returned something.
+//
+// A partial failure used to be invisible: the results were handed back and the
+// per-source reasons dropped on the floor, leaving them only in the debug log.
+// So a search where three of four sources were broken — AnimeFire's site
+// rewritten out from under its parser, SuperFlix rate limiting the network,
+// AniDB down — looked exactly like a search that had only ever had one source,
+// and was reported as "it is only searching Goyabu".
+//
+// Warn, not Error: the search worked. But a user comparing what they got
+// against what they expected deserves to know the catalogue was smaller than
+// usual, and why.
+func reportPartialFailure(failures []SourceFailure) {
+	if len(failures) == 0 {
+		return
+	}
+	util.Warnf("%d source(s) did not answer; results may be incomplete:", len(failures))
+	for _, f := range failures {
+		util.Warnf("  %s %s", f.Kind, f.Reason)
+	}
+}
+
 // ErrNoResults reports the ordinary outcome of a search that no source
 // matched — as opposed to one where the sources were tried and failed.
 //
@@ -211,38 +249,58 @@ func searchOneWithTimeout(parent context.Context, a activeSearcher, query string
 // one makes a normal answer look broken. Callers test with errors.Is.
 var ErrNoResults = errors.New("no results found")
 
-// finishSearch turns the collected fan-out into one result.
+// finishSearch turns the fan-out's outcome into one result or one error.
 //
-// answered is how many sources completed without erroring. It matters
-// because a source failing alongside sources that answered cleanly is not
-// the same event as every source failing: with one clean "nothing here" in
-// hand, the honest report is that the title was not found. Judging by
-// len(errs) alone meant one source hiccupping — AnimeFire answering 404 for
-// a moment, say — turned an ordinary empty search for an obscure title into
+// searched is how many sources were asked; answered is how many completed
+// without erroring, whether or not they matched anything.
+//
+// A source failing alongside sources that answered cleanly is not the same
+// event as every source failing: with one clean "nothing here" in hand, the
+// honest report is that the title was not found (ErrNoResults), and the
+// failures only go to the debug log. Judging by the failures alone meant one
+// source hiccupping turned an ordinary empty search for an obscure title into
 // a red failure, hiding the answer the other sources had already given.
-func finishSearch(query string, answered int, all []*models.Anime, errs []error) ([]*models.Anime, error) {
+//
+// The exception is a source that is rate limiting us: that is not a hiccup
+// but something the user has to act on (wait, or switch network), and a
+// source refusing to answer may well be the one that carries the title. So
+// a rate-limited failure is reported even when other sources answered.
+//
+// When nothing answered, the error is a *SearchFailure that leads with the
+// per-source diagnostics rather than the raw errors, so a user can tell a
+// broken GoAnime from a host that is refusing them.
+func finishSearch(query string, searched, answered int, all []*models.Anime, failures []SourceFailure) ([]*models.Anime, error) {
 	if len(all) > 0 {
+		reportPartialFailure(failures)
 		return all, nil
 	}
 
-	if answered > 0 {
-		// Partial failures are logged rather than returned: they change
-		// nothing about the answer, and surfacing them would put an outage
-		// message in front of a user whose search simply matched nothing.
-		if len(errs) > 0 {
+	if answered > 0 && !anyRateLimited(failures) {
+		if len(failures) > 0 {
+			f := &SearchFailure{Query: query, Searched: searched, Sources: failures}
 			util.Debug("search matched nothing; some sources also failed",
-				"query", query, "answered", answered, "failed", len(errs),
-				"errors", errors.Join(errs...))
+				"query", query, "answered", answered, "detail", f.Detail())
 		}
 		return nil, fmt.Errorf("%w for: %s", ErrNoResults, query)
 	}
 
-	if len(errs) > 0 {
-		return nil, fmt.Errorf("no results for %q (all sources failed): %w", query, errors.Join(errs...))
+	if len(failures) > 0 {
+		return nil, &SearchFailure{Query: query, Searched: searched, Sources: failures}
 	}
 	// Nothing reported at all before the deadline, so nothing is known about
 	// the title either way — not an empty result, and not ErrNoResults.
 	return nil, fmt.Errorf("no results for %q: no source answered in time", query)
+}
+
+// anyRateLimited reports whether any source failed because it is refusing
+// our traffic.
+func anyRateLimited(failures []SourceFailure) bool {
+	for _, f := range failures {
+		if f.RateLimited {
+			return true
+		}
+	}
+	return false
 }
 
 // FetchEpisodes lists an anime's episodes through the Model B registry — the
@@ -251,9 +309,9 @@ func finishSearch(query string, answered int, all []*models.Anime, errs []error)
 // fallback), normalizes anime.Source, then delegates to the resolved Source's
 // FetchEpisodes.
 //
-// Behavior is equivalent to the legacy switch: AllAnime/AnimeFire/Goyabu list
+// Behavior is equivalent to the legacy switch: HiAnime/AnimeFire/Goyabu list
 // via their adapters; SuperFlix runs its season picker; an unrecognized source
-// falls back to best-effort AllAnime (unless GOANIME_STRICT_SOURCE disables it).
+// reports Unknown rather than guessing at a source.
 func FetchEpisodes(ctx context.Context, anime *models.Anime) ([]models.Episode, error) {
 	if anime == nil {
 		return nil, fmt.Errorf("cannot fetch episodes for a nil anime")

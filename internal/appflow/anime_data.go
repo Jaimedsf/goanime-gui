@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alvarorichard/Goanime/internal/api"
@@ -54,14 +55,26 @@ var (
 
 // defaultRunSpinner is the production spinner wrapper. It is replaced by
 // tests with a synchronous passthrough so the action runs inline.
+//
+// The spinner is decoration; the action is the work. When there is no terminal
+// (tui.ErrNoTTY) or the spinner itself fails, the action has not run, so it is
+// run directly here — a non-interactive environment must still make progress.
+// sync.Once makes the two paths mutually exclusive, so an action that already
+// ran inside the spinner is never repeated.
 func defaultRunSpinner(title string, action func()) {
+	var once sync.Once
+	wrapped := func() { once.Do(action) }
+
 	_ = tui.RunClean(func() error {
 		return spinner.New().
 			Title(title).
 			Type(spinner.Dots).
-			Action(action).
+			Action(wrapped).
 			Run()
 	})
+
+	// No-op when the spinner already ran it; runs it now when it did not.
+	wrapped()
 }
 
 // defaultPromptForName is the production prompt. Returns the user's input
@@ -79,11 +92,11 @@ func defaultPromptForName(_ string) (string, error) {
 			return nil
 		})
 	if err := tui.RunClean(prompt.Run); err != nil {
-		return "", fmt.Errorf("search cancelled by user")
+		return "", fmt.Errorf("search cancelled by user: %w", api.ErrSearchAborted)
 	}
 	name := strings.TrimSpace(newName)
 	if name == "" {
-		return "", fmt.Errorf("search cancelled: empty name provided")
+		return "", fmt.Errorf("search cancelled: empty name provided: %w", api.ErrSearchAborted)
 	}
 	return name, nil
 }
@@ -102,7 +115,7 @@ func SearchAnime(name string) (*models.Anime, error) {
 	return anime, nil
 }
 
-// SearchAnimeEnhanced - busca em ambas as fontes (AllAnime e AnimeFire) simultaneamente
+// SearchAnimeEnhanced - busca em todas as fontes registradas simultaneamente
 func SearchAnimeEnhanced(name string) (*models.Anime, error) {
 	searchStart := time.Now()
 
@@ -124,7 +137,7 @@ func SearchAnimeWithRetry(name string) (*models.Anime, error) {
 		searchStart := time.Now()
 
 		// Attempt to search for anime (spinner is inside api.SearchAnimeEnhanced)
-		// Respect user's --source flag (e.g. --source allanime) via GlobalSource
+		// Respect user's --source flag (e.g. --source hianime) via GlobalSource
 		source := util.GlobalSource
 		if source != "" {
 			util.Debugf("Searching for: %s (source: %s)", currentName, source)
@@ -138,12 +151,27 @@ func SearchAnimeWithRetry(name string) (*models.Anime, error) {
 			return anime, nil
 		}
 
-		// Check if user requested to go back to search
-		if errors.Is(searchErr, api.ErrBackToSearch) {
+		// A deliberate quit (q / Ctrl+C on the result screen) is an exit, not a
+		// failed search: stop here instead of claiming nothing was found and
+		// re-prompting (issue #203).
+		if errors.Is(searchErr, api.ErrSearchAborted) {
+			return nil, searchErr
+		}
+
+		var failure *providers.SearchFailure
+		switch {
+		case errors.Is(searchErr, api.ErrBackToSearch):
 			util.Infof("Going back to new search...")
-		} else {
-			// Display error message to user for other errors
+		case searchErr == nil, errors.Is(searchErr, api.ErrNoResults):
+			// Either every source answered with nothing, or the search
+			// returned no error and no anime — both are "not found".
 			util.Errorf("No anime found with the name: %s", currentName)
+		case errors.As(searchErr, &failure):
+			reportSearchFailure(currentName, failure)
+		default:
+			// A transport/source failure is not the same as an empty result;
+			// saying "no anime found" here hides the real reason.
+			util.Errorf("Search failed for %q: %v", currentName, searchErr)
 		}
 
 		util.Infof("Please enter a new search term.")
@@ -154,6 +182,48 @@ func SearchAnimeWithRetry(name string) (*models.Anime, error) {
 		}
 		currentName = nextName
 	}
+}
+
+// reportSearchFailure prints one short line per source instead of the error
+// chain.
+//
+// The chain is still what travels through the code and lands in the debug log;
+// what it is not is something to read. Printed whole it said the same thing
+// three times over — the aggregate summary, the per-source diagnostics, and
+// then every raw cause again — for a user whose only real question is "is this
+// me, the title, or the site?".
+func reportSearchFailure(query string, failure *providers.SearchFailure) {
+	// "Every source failed" only when every source did.
+	//
+	// Searching "o-todo-poderoso" on 2026-09-24 had three sources answer
+	// normally with no match and one refuse the connection, and said every
+	// source failed — which reads as "your install is broken" when the truth is
+	// "nobody has this title, and one host is throttling you". Those call for
+	// different reactions from the user, so they get different sentences.
+	if failure.AllFailed() {
+		util.Errorf("No results for %q — every source failed:", query)
+	} else {
+		util.Errorf("No results for %q — %d source(s) had no match and %d could not be reached:",
+			query, failure.Answered(), len(failure.Sources))
+	}
+	for _, src := range failure.Sources {
+		util.Errorf("  %s %s", src.Kind, src.Reason)
+	}
+	if failure.RateLimited() {
+		// Says what to DO, and says it in a way that does not invite the retry.
+		//
+		// The old line ("wait a few minutes") was read as an invitation to try
+		// again shortly, and trying again is the one thing that makes it worse:
+		// this host's guard is renewed by every request sent during a block.
+		// Measured 2026-09-25, /pesquisar stayed refused through three, six and
+		// ten minutes of TOTAL silence — and the user searching every ten
+		// seconds in between is what kept resetting that clock.
+		util.Infof("A source is refusing this network. Every new search restarts its block, so waiting is the fix — about 15 minutes, or switch network/VPN to get it back now.")
+	}
+	if !failure.AllFailed() {
+		util.Infof("The sources that did answer simply do not have %q. Try another spelling, or a different title.", query)
+	}
+	util.Debugf("search failure detail: %s", failure.Detail())
 }
 
 // FetchAnimeDetails enriches anime with metadata from AniList and/or the
@@ -184,29 +254,15 @@ func fetchAnimeDetailsCore(anime *models.Anime) {
 		return
 	}
 
-	needsAniList := anime.AnilistID <= 0 || anime.MalID <= 0 || anime.ImageURL == ""
-	needsSourceDetails := anime.Source == "AllAnime" && len(anime.URL) > 20 && strings.Contains(anime.URL, "allanime.to")
-
-	switch {
-	case needsAniList && needsSourceDetails:
-		// Both enrichers mutate the same Media value. Running them concurrently
-		// made field precedence nondeterministic and raced on IDs, cover art and
-		// slices. AniList establishes the base metadata; source-specific details
-		// then deterministically refine it.
+	// The second enricher (sourceDetailsFetchFn, an og:image scrape of the
+	// anime page) was only ever reached for AllAnime titles. That source is
+	// gone, so AniList is the single enrichment path for anime; movies/TV still
+	// take the TMDB branch above.
+	if anime.AnilistID <= 0 || anime.MalID <= 0 || anime.ImageURL == "" {
 		enrichFromAniList(anime)
-		if err := sourceDetailsFetchFn(anime); err != nil {
-			util.Debugf("Failed to fetch anime details from source: %v", err)
-		}
-	case needsAniList:
-		enrichFromAniList(anime)
-	default:
-		util.Debugf("AniList data already present (ID: %d, MAL: %d), skipping redundant fetch", anime.AnilistID, anime.MalID)
-		if needsSourceDetails {
-			if err := sourceDetailsFetchFn(anime); err != nil {
-				util.Debugf("Failed to fetch anime details from source: %v", err)
-			}
-		}
+		return
 	}
+	util.Debugf("AniList data already present (ID: %d, MAL: %d), skipping redundant fetch", anime.AnilistID, anime.MalID)
 }
 
 // enrichFromAniList fetches AniList metadata via aniListFetchFn and applies

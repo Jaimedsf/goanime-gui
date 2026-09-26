@@ -103,8 +103,8 @@ func PlayerAvailable(name string) bool {
 // metadata; external players only get what we put on the command line.
 func fallbackReferer(sourceName string) string {
 	switch {
-	case strings.EqualFold(sourceName, string(source.AllAnime)):
-		return "https://allmanga.to"
+	case strings.EqualFold(sourceName, string(source.HiAnime)):
+		return "https://hianime.at"
 	case strings.HasPrefix(strings.ToLower(sourceName), "animefire"):
 		return "https://animefire.one"
 	case strings.EqualFold(sourceName, string(source.Goyabu)):

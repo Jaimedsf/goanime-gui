@@ -13,8 +13,31 @@ import (
 // in the HTTP path; converting to string on every check would allocate a copy
 // for a hot fallback decision.
 var cfChallengeMarkers = [][]byte{
-	[]byte("/cdn-cgi/challenge-platform"),
-	[]byte("challenges.cloudflare.com/turnstile"),
+	// Only the interstitial's orchestrate path counts. The bare
+	// "/cdn-cgi/challenge-platform" prefix does NOT: Cloudflare injects a
+	// passive bot-telemetry snippet
+	// ("/cdn-cgi/challenge-platform/scripts/jsd/main.js") into ORDINARY
+	// responses it proxies — including plain 404s from the origin. Matching the
+	// bare prefix made a dead player page look like a challenge, so the flow
+	// handed it to the headed browser, which then sat on a "404 Not Found" page
+	// waiting for a stream that could never load until the sniff timed out.
+	[]byte("/cdn-cgi/challenge-platform/h/"),
+	// "challenges.cloudflare.com/turnstile" used to be listed here and is NOT
+	// any more. It is the second marker on this list to be too broad, for the
+	// same reason as the one above: a script URL says the page can render a
+	// Turnstile widget, not that the page IS one.
+	//
+	// SuperFlix added a login modal that mounts a Turnstile
+	// (data-api-auth-turnstile="login"), so from 2026-09-24 that script tag
+	// ships on EVERY page — including a perfectly good search results page.
+	// Every SuperFlix search was then classified as a captcha block and the
+	// source dropped out of the fan-out entirely, while plain curl on the same
+	// URL got 200 and three results. testdata/search_results_2026_09_24.html is
+	// that page.
+	//
+	// The gates themselves are still caught: a Cloudflare managed challenge
+	// carries cf_chl_opt / __cf_chl_ / "Just a moment...", and SuperFlix's own
+	// gate carries cf-turnstile-form and <title>Verificação</title>.
 	[]byte("cf_chl_opt"),
 	[]byte("__cf_chl_"),
 	[]byte("Just a moment..."),
@@ -66,15 +89,24 @@ func bodyHasChallengeMarker(body []byte) bool {
 // interstitial that requires a real browser to solve.
 //
 // Logic:
-//   - status 403/503 with HTML body → very likely a challenge
-//   - any status with a known marker substring in body → challenge
+//   - status 404/410 → never a challenge (the origin answered "not found")
 //   - presence of "cf-mitigated: challenge" response header → challenge
+//   - any other status with a known interstitial marker in body → challenge
+//   - status 403/503 with HTML body → very likely a challenge
 //
 // SuperFlix's real API can legitimately return 403 (rate limit) without a
 // challenge — those bodies are JSON, not HTML, so the marker check filters
 // them out.
 func IsCloudflareChallenge(resp *http.Response, body []byte) bool {
 	if resp == nil {
+		return false
+	}
+
+	// A 404/410 is the origin saying "this does not exist" — Cloudflare serves
+	// its interstitials as 403/503/429 (or a 200 HTML page), never as a missing
+	// resource. Treating a dead page as a challenge sends the flow to the
+	// browser solver for a page that will never resolve.
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
 		return false
 	}
 
