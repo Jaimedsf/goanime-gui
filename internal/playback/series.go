@@ -133,7 +133,7 @@ func HandleSeries(ctx context.Context, anime *models.Anime, episodes []models.Ep
 
 		// Handle other errors
 		if err != nil {
-			log.Printf("Error during episode playback: %v", err)
+			log.Printf("Error during episode playback: %s", util.ForLog(err.Error()))
 		}
 
 		userInput := GetUserInput()

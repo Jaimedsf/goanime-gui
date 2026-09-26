@@ -320,8 +320,9 @@ func extractZip(zipPath, destDir string) error {
 	}()
 
 	for _, f := range r.File {
-		// Only extract .glsl files
-		if !strings.HasSuffix(f.Name, ".glsl") {
+		// Only extract .glsl files, and skip any entry whose path climbs out
+		// of the archive (filepath.Base below would flatten it anyway).
+		if !strings.HasSuffix(f.Name, ".glsl") || strings.Contains(f.Name, "..") {
 			continue
 		}
 

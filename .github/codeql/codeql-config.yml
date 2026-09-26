@@ -1,0 +1,7 @@
+name: GoAnime CodeQL config
+
+# Captured pages from the sites the scrapers read, kept verbatim so the
+# parsers are tested against real markup. They are third-party code the app
+# never runs, so alerts in them are not ours to fix.
+paths-ignore:
+  - '**/testdata/**'

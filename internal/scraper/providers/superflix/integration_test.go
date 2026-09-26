@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -46,7 +47,7 @@ func buildSuperFlixTestServer(t *testing.T, opts testServerOpts) *httptest.Serve
 		}
 		// Default search response
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, defaultSearchHTML(query))
+		fmt.Fprint(w, defaultSearchHTML(html.EscapeString(query)))
 	})
 
 	srv := httptest.NewServer(mux)

@@ -1764,8 +1764,9 @@ func downloadSubtitleFiles(videoPath string, printFn func(format string, a ...an
 			lang = "unknown"
 		}
 
-		// Download to a temp file
-		tmpPath := filepath.Join(dir, fmt.Sprintf(".tmp_sub_%s.%s", lang, ext))
+		// Download to a temp file. os.CreateTemp picks the name, so nothing
+		// from the remote label ends up in a path.
+		var tmpPath string
 		req, reqErr := http.NewRequest("GET", sub.URL, http.NoBody)
 		if reqErr != nil {
 			util.Warnf("Failed to create subtitle request (%s): %v", sub.Label, reqErr)
@@ -1785,11 +1786,12 @@ func downloadSubtitleFiles(videoPath string, printFn func(format string, a ...an
 				util.Warnf("Subtitle download failed (%s): HTTP %d", sub.Label, resp.StatusCode)
 				return
 			}
-			out, oErr := os.Create(filepath.Clean(tmpPath))
+			out, oErr := os.CreateTemp(dir, ".tmp_sub_*."+ext)
 			if oErr != nil {
 				util.Warnf("Failed to create temp subtitle file (%s): %v", sub.Label, oErr)
 				return
 			}
+			tmpPath = out.Name()
 			defer func() { _ = out.Close() }()
 			if _, cpErr := io.Copy(out, resp.Body); cpErr != nil {
 				util.Warnf("Failed to write subtitle (%s): %v", sub.Label, cpErr)

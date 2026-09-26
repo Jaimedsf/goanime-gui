@@ -56,7 +56,7 @@ func TestLiveHiAnimeThroughRegistry(t *testing.T) {
 	if !strings.Contains(streamURL, ".m3u8") {
 		t.Fatalf("not a playlist: %s", streamURL)
 	}
-	fmt.Printf("stream   : %.86s…\n", streamURL)
+	fmt.Printf("stream   : %.86s…\n", util.ForLog(streamURL))
 
 	// Resolving a URL is not the same as being able to play it. The CDN checks
 	// the Referer, so this is the step that would have caught the metadata the
@@ -80,7 +80,7 @@ func TestLiveHiAnimeThroughRegistry(t *testing.T) {
 		for i, s := range subs {
 			labels[i] = s.Label
 		}
-		fmt.Printf("subtitles: %s\n", strings.Join(labels, ", "))
+		fmt.Printf("subtitles: %s\n", util.ForLog(strings.Join(labels, ", ")))
 	}
 }
 
