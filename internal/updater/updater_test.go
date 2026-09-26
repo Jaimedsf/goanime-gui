@@ -1088,6 +1088,31 @@ func TestIsVersionNewer_EdgeCases(t *testing.T) {
 	}
 }
 
+func TestIsVersionNewer_ForkBuilds(t *testing.T) {
+	tests := []struct {
+		name     string
+		latest   string
+		current  string
+		expected bool
+	}{
+		{"next fork build", "v1.8.7-gui.2", "1.8.7-gui.1", true},
+		{"same fork build", "v1.8.7-gui.1", "1.8.7-gui.1", false},
+		{"older fork build", "v1.8.7-gui.1", "1.8.7-gui.2", false},
+		{"next upstream version", "v1.8.8-gui.1", "1.8.7-gui.3", true},
+		{"fork build over plain upstream", "v1.8.7-gui.1", "1.8.7", true},
+		{"two-part base is padded", "v1.9-gui.1", "1.8.7-gui.4", true},
+		{"double-digit build", "v1.8.7-gui.10", "1.8.7-gui.9", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := isVersionNewer(tt.latest, tt.current)
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 // Test version comparison with semantic versioning edge cases
 func TestIsVersionNewer_SemanticVersioning(t *testing.T) {
 	tests := []struct {

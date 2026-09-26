@@ -5,11 +5,14 @@
 ;   staging\goanime-gui.exe      the desktop app
 ;   staging\bin\mpv.exe + *.dll  the bundled player
 ;
-; The release workflow rewrites MyAppVersion from the git tag before calling
-; ISCC, so the value below only matters for a local build.
+; The release workflow rewrites MyAppVersion and MyAppFileVersion from the git
+; tag before calling ISCC, so the values below only matter for a local build.
+; MyAppVersion is the tag as written (1.8.7-gui.1); MyAppFileVersion is the
+; all-numeric form Windows needs for the file's version resource (1.8.7.1).
 
 #define MyAppName "GoAnime"
-#define MyAppVersion "1.8.6"
+#define MyAppVersion "1.8.7-gui.1"
+#define MyAppFileVersion "1.8.7.1"
 #define MyAppPublisher "Jaimedsf (GoAnime fork)"
 #define MyAppURL "https://github.com/Jaimedsf/goanime-gui"
 #define MyAppExeName "goanime.exe"
@@ -55,7 +58,7 @@ CloseApplications=yes
 RestartApplications=yes
 
 ; The installer executable's own Properties -> Details tab.
-VersionInfoVersion={#MyAppVersion}
+VersionInfoVersion={#MyAppFileVersion}
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} Setup
 VersionInfoProductName={#MyAppName}

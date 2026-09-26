@@ -28,9 +28,11 @@ import (
 // upstream could stream until the process ran out of memory.
 const maxJSONResponseBytes = 10 << 20 // 10 MiB
 
+// The fork publishes its own releases (tagged vX.Y.Z-gui.N), so updates come
+// from here rather than upstream, whose builds do not include the desktop app.
 const (
-	GitHubOwner = "alvarorichard"
-	GitHubRepo  = "GoAnime"
+	GitHubOwner = "Jaimedsf"
+	GitHubRepo  = "goanime-gui"
 	GitHubAPI   = "https://api.github.com/repos/" + GitHubOwner + "/" + GitHubRepo
 )
 
@@ -373,8 +375,8 @@ func CheckForUpdatesQuietly() {
 
 func isVersionNewer(latest, current string) (bool, error) {
 	// Normalize: strip any "v" prefix that might have been left
-	latest = strings.TrimPrefix(latest, "v")
-	current = strings.TrimPrefix(current, "v")
+	latest = normalizeForkVersion(strings.TrimPrefix(latest, "v"))
+	current = normalizeForkVersion(strings.TrimPrefix(current, "v"))
 
 	latestParts := strings.Split(latest, ".")
 	currentParts := strings.Split(current, ".")
@@ -409,6 +411,22 @@ func isVersionNewer(latest, current string) (bool, error) {
 	}
 
 	return false, nil // Versions are equal
+}
+
+// normalizeForkVersion folds the fork's build suffix into a fourth numeric
+// component, so the plain numeric comparison above can order it: the fork tags
+// vX.Y.Z-gui.N on top of upstream's X.Y.Z, and 1.8.7-gui.2 must sort after
+// 1.8.7-gui.1 but before 1.8.8-gui.1. Versions without the suffix pass through.
+func normalizeForkVersion(v string) string {
+	base, build, ok := strings.Cut(v, "-gui.")
+	if !ok {
+		return v
+	}
+	parts := strings.Split(base, ".")
+	for len(parts) < 3 {
+		parts = append(parts, "0")
+	}
+	return strings.Join(append(parts, build), ".")
 }
 
 // PlatformInfo holds platform-specific information
