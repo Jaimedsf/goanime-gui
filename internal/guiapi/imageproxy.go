@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -242,18 +243,39 @@ var imgClient = &http.Client{
 	},
 }
 
+// nonPublicPrefixes are the ranges the standard library's Is* helpers do not
+// cover but that still reach something other than the public internet.
+var nonPublicPrefixes = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),     // "this network"
+	netip.MustParsePrefix("100.64.0.0/10"), // carrier-grade NAT, and Tailscale's tailnet
+	netip.MustParsePrefix("192.0.0.0/24"),  // IETF protocol assignments
+	netip.MustParsePrefix("198.18.0.0/15"), // benchmarking
+	netip.MustParsePrefix("240.0.0.0/4"),   // reserved, and the broadcast address
+	netip.MustParsePrefix("64:ff9b::/96"),  // NAT64: embeds an IPv4 address
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("2002::/16"), // 6to4: embeds an IPv4 address
+}
+
 func denyPrivateAddress(_, address string, _ syscall.RawConn) error {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
 		return fmt.Errorf("endereço inesperado %q: %w", address, err)
 	}
-	ip := net.ParseIP(host)
-	if ip == nil {
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
 		return fmt.Errorf("endereço inesperado %q", address)
 	}
+	// An IPv4 address written as ::ffff:a.b.c.d must be judged as the IPv4
+	// address it is, or it would slip past every IPv4 range below.
+	ip = ip.Unmap()
 	if ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
-		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		ip.IsLinkLocalUnicast() || ip.IsMulticast() {
 		return fmt.Errorf("endereço não público recusado: %s", ip)
+	}
+	for _, p := range nonPublicPrefixes {
+		if p.Contains(ip) {
+			return fmt.Errorf("endereço não público recusado: %s", ip)
+		}
 	}
 	return nil
 }
