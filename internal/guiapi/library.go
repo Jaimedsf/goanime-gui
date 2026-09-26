@@ -44,7 +44,7 @@ func ensureMigration() {
 			return
 		}
 		jsonPath := filepath.Join(home, ".local", "goanime", "gui-library.json")
-		data, err := os.ReadFile(jsonPath)
+		data, err := os.ReadFile(jsonPath) // #nosec G304: fixed path under the user's home directory
 		if err != nil {
 			return
 		}
@@ -103,22 +103,6 @@ func titleKey(r SearchResult) string {
 		return src + "|" + strings.ToLower(u)
 	}
 	return src + "|name:" + strings.ToLower(normalizeTitle(r.Name))
-}
-
-// episodeKey identifies one episode within a title.
-func episodeKey(ep EpisodeResult) string {
-	if ep.SeasonID != "" {
-		return ep.SeasonID + ":" + ep.Number
-	}
-	return ep.Number
-}
-
-// episodeKeyOf rebuilds the episode key from a stored entry.
-func episodeKeyOf(h HistoryEntry) string {
-	if h.SeasonID != "" {
-		return h.SeasonID + ":" + h.EpisodeNumber
-	}
-	return h.EpisodeNumber
 }
 
 // --- favorites -----------------------------------------------------------
