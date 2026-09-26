@@ -18,25 +18,58 @@ concurrency:
 
 jobs:
   analyze:
-    name: Analyze Go
-    runs-on: ubuntu-latest
+    name: Analyze ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Go is analysed from what the build compiles, so one OS only ever
+          # sees its own files. Linux covers the *_unix.go / !windows side,
+          # Windows the *_windows.go side; together they cover every file.
+          - name: Go (Linux)
+            language: go
+            build-mode: autobuild
+            runner: ubuntu-latest
+            category: /language:go
+          - name: Go (Windows)
+            language: go
+            build-mode: autobuild
+            runner: windows-latest
+            category: /language:go/windows
+          # The desktop frontend: hand-written ES modules and the Wails
+          # type declarations. Nothing to build.
+          - name: JavaScript/TypeScript
+            language: javascript-typescript
+            build-mode: none
+            runner: ubuntu-latest
+            category: /language:javascript-typescript
+    env:
+      # Also extract *_test.go. The build never compiles them, so without
+      # this CodeQL skips most of the Go files in the repository.
+      CODEQL_EXTRACTOR_GO_OPTION_EXTRACT_TESTS: 'true'
     steps:
       - name: Check out code
         uses: actions/checkout@v7
         with:
           persist-credentials: false
 
+      - name: Set up Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4.37.4
         with:
-          languages: go
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
           queries: security-extended,security-and-quality
-
-      - name: Build
-        uses: github/codeql-action/autobuild@v4.37.4
 
       - name: Analyze
         uses: github/codeql-action/analyze@v4.37.4
         with:
-          category: /language:go
+          category: ${{ matrix.category }}
