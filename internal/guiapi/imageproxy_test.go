@@ -257,6 +257,16 @@ func TestDenyPrivateAddress(t *testing.T) {
 		{"172.16.0.1:80", false},
 		{"169.254.169.254:80", false}, // the cloud metadata endpoint
 		{"0.0.0.0:80", false},
+		{"100.101.102.103:80", false}, // a Tailscale peer
+		{"198.18.0.1:80", false},
+		{"255.255.255.255:80", false},
+		{"224.0.0.1:80", false},
+		{"[::ffff:127.0.0.1]:80", false}, // IPv4-mapped loopback
+		{"[::ffff:10.0.0.5]:80", false},
+		{"[fd00::1]:80", false},              // unique local
+		{"[64:ff9b::a00:5]:80", false},       // NAT64 of 10.0.0.5
+		{"[2002:a00:5::1]:80", false},        // 6to4 of 10.0.0.5
+		{"[::ffff:93.184.216.34]:443", true}, // IPv4-mapped public
 		{"not-an-address", false},
 	}
 
