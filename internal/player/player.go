@@ -53,6 +53,17 @@ func PreWarmMPVPath() {
 	})
 }
 
+// MPVPath returns the mpv executable StartVideo would launch. It searches PATH
+// and the usual install folders once per process, so a GUI can tell whether
+// mpv is usable without duplicating that list — an installer that does not
+// touch PATH (winget's mpv, for one) is otherwise invisible to exec.LookPath.
+func MPVPath() (string, error) {
+	cachedMPVPathOnce.Do(func() {
+		cachedMPVPath, cachedMPVPathErr = findMPVPath()
+	})
+	return cachedMPVPath, cachedMPVPathErr
+}
+
 // mediaState groups mutable per-session media metadata behind a lock so that
 // concurrent goroutines (batch downloads, etc.) can safely read while the main
 // flow writes.

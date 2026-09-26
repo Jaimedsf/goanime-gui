@@ -51,6 +51,7 @@ func findMPVPath() (string, error) {
 		possiblePaths = append(possiblePaths,
 			filepath.Join(programFiles, "GoAnime", "bin", "mpv.exe"),
 			filepath.Join(programFiles, "mpv", "mpv.exe"),
+			filepath.Join(programFiles, "MPV Player", "mpv.exe"), // winget shinchiro.mpv
 			filepath.Join(programFiles, "mpv.net", "mpv.exe"),
 		)
 	}

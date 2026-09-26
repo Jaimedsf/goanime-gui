@@ -87,7 +87,7 @@ func firstExisting(candidates []string, fallback string) string {
 // out players that are not installed instead of failing at click time.
 func PlayerAvailable(name string) bool {
 	if name == "" || strings.EqualFold(name, "mpv") {
-		_, err := exec.LookPath("mpv")
+		_, err := player.MPVPath()
 		return err == nil
 	}
 	resolved := resolvePlayerPath(name)
