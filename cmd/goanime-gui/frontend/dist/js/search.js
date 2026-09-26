@@ -124,7 +124,7 @@ export async function runSearch(query, source) {
 }
 
 export function loadQueryHistory() {
-  let items = [];
+  let items;
   try {
     items = JSON.parse(readStorage(STORAGE.history, "[]")) || [];
   } catch {
