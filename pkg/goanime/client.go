@@ -154,16 +154,10 @@ func (c *Client) GetEpisodeStreamURL(anime *types.Anime, episode *types.Episode,
 		return "", nil, err
 	}
 
-	// Set default options if not provided
-	opts := DefaultStreamOptions()
-	if options != nil {
-		if options.Quality != "" {
-			opts.Quality = options.Quality
-		}
-		if options.Mode != "" {
-			opts.Mode = options.Mode
-		}
-	}
+	// No remaining source takes a quality or mode hint (the AllAnime branch
+	// that did went with that source), so options is accepted for API
+	// compatibility and otherwise unused.
+	_ = options
 
 	// The episode URL is the direct episode page. (The AllAnime branch that
 	// passed an anime ID + episode number instead went with that source.)

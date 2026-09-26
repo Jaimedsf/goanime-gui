@@ -207,7 +207,10 @@ func extractExecutableFromZipAsset(zipPath string) (executablePath string, clean
 
 	var selected *zip.File
 	for _, f := range reader.File {
-		if f.FileInfo().IsDir() {
+		// Never pick an entry whose path climbs out of the archive. The
+		// extraction below is scoped by os.Root anyway; this keeps such an
+		// entry from being selected at all.
+		if f.FileInfo().IsDir() || strings.Contains(f.Name, "..") {
 			continue
 		}
 
@@ -220,7 +223,7 @@ func extractExecutableFromZipAsset(zipPath string) (executablePath string, clean
 
 	if selected == nil {
 		for _, f := range reader.File {
-			if f.FileInfo().IsDir() {
+			if f.FileInfo().IsDir() || strings.Contains(f.Name, "..") {
 				continue
 			}
 

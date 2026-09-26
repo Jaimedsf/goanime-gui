@@ -48,7 +48,7 @@ func HandleMovie(ctx context.Context, anime *models.Anime, episodes []models.Epi
 		videoURL, videoErr = player.GetVideoURLForEpisodeEnhanced(ctx, &episodes[0], anime)
 
 		if videoErr != nil {
-			log.Printf("Failed to extract video URL: %v", util.ErrorHandler(videoErr))
+			log.Printf("Failed to extract video URL: %s", util.ForLog(util.ErrorHandler(videoErr)))
 			// Return to anime selection
 			return player.ErrBackToAnimeSelection
 		}
@@ -125,7 +125,7 @@ func HandleMovie(ctx context.Context, anime *models.Anime, episodes []models.Epi
 		}
 
 		if playErr != nil {
-			log.Printf("Error during movie playback: %v", playErr)
+			log.Printf("Error during movie playback: %s", util.ForLog(playErr.Error()))
 		}
 
 		// Ask user what to do next after movie finishes

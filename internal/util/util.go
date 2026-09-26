@@ -10,12 +10,28 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 
 	"charm.land/huh/v2"
 	"github.com/alvarorichard/Goanime/internal/tui"
 	"github.com/alvarorichard/Goanime/internal/version"
 	"github.com/ktr0731/go-fuzzyfinder"
 )
+
+// ForLog makes text that came from a remote source safe to print on one
+// terminal line. A newline in it could forge extra log entries, and other
+// control characters (ANSI escapes above all) could rewrite what the terminal
+// shows. Tabs survive; every other control character is dropped.
+func ForLog(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if r != '\t' && r != '\n' && r != '\r' && unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+	s = strings.ReplaceAll(s, "\n", " ")
+	return strings.ReplaceAll(s, "\r", " ")
+}
 
 // SubtitleInfo represents a single subtitle track
 type SubtitleInfo struct {
@@ -209,7 +225,7 @@ func SelectSubtitles() {
 		if label == "" {
 			label = fmt.Sprintf("Subtitle %d", i+1)
 		}
-		items = append(items, subtitleOption{label, i})
+		items = append(items, subtitleOption{ForLog(label), i})
 	}
 	items = append(items, subtitleOption{"No subtitles", -2})
 
@@ -234,7 +250,7 @@ func SelectSubtitles() {
 		if selected >= 0 && selected < len(GlobalSubtitles) {
 			kept := GlobalSubtitles[selected]
 			GlobalSubtitles = []SubtitleInfo{kept}
-			Debugf("User selected subtitle: %s (%s)", kept.Label, kept.Language)
+			Debugf("User selected subtitle: %s (%s)", ForLog(kept.Label), ForLog(kept.Language))
 		}
 	}
 }
@@ -272,6 +288,7 @@ func PromptSubtitleLanguage() {
 		if label == "" {
 			label = "Unknown"
 		}
+		label = ForLog(label)
 
 		fmt.Printf("\n1 subtitle track available: %s\n", label)
 
@@ -313,7 +330,7 @@ func PromptSubtitleLanguage() {
 		if label == "" {
 			label = fmt.Sprintf("Subtitle %d", i+1)
 		}
-		items = append(items, subtitleOption{label, i})
+		items = append(items, subtitleOption{ForLog(label), i})
 	}
 	items = append(items, subtitleOption{"No subtitles", -2})
 
@@ -341,8 +358,8 @@ func PromptSubtitleLanguage() {
 		if selected >= 0 && selected < len(GlobalSubtitles) {
 			kept := GlobalSubtitles[selected]
 			GlobalSubtitles = []SubtitleInfo{kept}
-			fmt.Printf("Subtitles: %s\n", kept.Label)
-			Debugf("User selected subtitle: %s (%s)", kept.Label, kept.Language)
+			fmt.Printf("Subtitles: %s\n", ForLog(kept.Label))
+			Debugf("User selected subtitle: %s (%s)", ForLog(kept.Label), ForLog(kept.Language))
 		}
 	}
 }

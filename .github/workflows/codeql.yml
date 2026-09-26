@@ -12,9 +12,12 @@ permissions:
   contents: read
   security-events: write
 
+# Only PR runs are cancelled when superseded. A cancelled run on main still
+# uploads a failed analysis, which then shows on the code scanning status page
+# as an error until the next scan.
 concurrency:
   group: codeql-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   analyze:
@@ -49,6 +52,9 @@ jobs:
       # Also extract *_test.go. The build never compiles them, so without
       # this CodeQL skips most of the Go files in the repository.
       CODEQL_EXTRACTOR_GO_OPTION_EXTRACT_TESTS: 'true'
+      # The live-network tests sit behind build tags; include them so they
+      # are scanned too. Nothing is run, only compiled.
+      GOFLAGS: -tags=live,sourcehealth
     steps:
       - name: Check out code
         uses: actions/checkout@v7
@@ -67,6 +73,7 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
+          config-file: ./.github/codeql/codeql-config.yml
           queries: security-extended,security-and-quality
 
       - name: Analyze
