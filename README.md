@@ -6,6 +6,12 @@
 
 # GoAnime
 
+> **Fork não oficial** de [alvarorichard/GoAnime](https://github.com/alvarorichard/GoAnime),
+> com um aplicativo desktop (Wails) por cima do mesmo núcleo. O motor de busca,
+> as fontes e o player vêm do projeto original, que este repositório acompanha
+> por merge; problemas do app de terminal ou das fontes provavelmente pertencem
+> lá. Distribuído sob a mesma [licença MIT](LICENSE), com os créditos originais.
+
 O GoAnime permite procurar animes, filmes e séries e reproduzir ou baixar
 episódios direto no mpv. Ele coleta dados de várias fontes para oferecer
 conteúdo legendado e dublado em inglês e português.
@@ -23,7 +29,9 @@ São dois aplicativos sobre a mesma base:
 3.  [Compilando](#compilando)
 4.  [Como usar](#como-usar)
 5.  [Uso avançado](#uso-avançado)
-6.  [Contribuindo](#contribuindo)
+6.  [Aviso](#aviso)
+7.  [Créditos](#créditos)
+8.  [Contribuindo](#contribuindo)
 
 ## Recursos
 
@@ -101,6 +109,20 @@ goanime "Naruto"
 ```bash
 goanime -h
 ```
+
+## Aviso
+
+O GoAnime não hospeda, armazena nem distribui nenhum vídeo. Ele apenas
+localiza links publicados por sites de terceiros e os abre no seu player; a
+disponibilidade e a legalidade desse conteúdo são responsabilidade desses
+sites e de quem os acessa, conforme a lei do seu país.
+
+## Créditos
+
+*   [alvarorichard/GoAnime](https://github.com/alvarorichard/GoAnime) e seus
+    contribuidores — o projeto original, do qual vem todo o núcleo.
+*   [Wails](https://wails.io/), [mpv](https://mpv.io/) e
+    [Anime4K](https://github.com/bloc97/Anime4K).
 
 ## Contribuindo
 

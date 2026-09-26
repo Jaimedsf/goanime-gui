@@ -10,13 +10,16 @@
 
 #define MyAppName "GoAnime"
 #define MyAppVersion "1.8.6"
-#define MyAppPublisher "GoAnime Team"
+#define MyAppPublisher "Jaimedsf (GoAnime fork)"
 #define MyAppURL "https://github.com/Jaimedsf/goanime-gui"
 #define MyAppExeName "goanime.exe"
 #define MyAppGuiExeName "goanime-gui.exe"
 
 [Setup]
-AppId={{A1B2C3D4-E5F6-7890-ABCD-EF1234567890}
+; Not upstream's AppId: Inno Setup treats two installers with the same id as
+; one product, so this one would silently upgrade over (or uninstall) a copy
+; of the original GoAnime. The fork ships a different app and needs its own.
+AppId={{097150EB-032D-4E60-AFCA-48612D9DDE7F}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}

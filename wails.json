@@ -10,12 +10,12 @@
   "frontend:dir": "cmd/goanime-gui/frontend",
   "wailsjsdir": "cmd/goanime-gui/frontend/src",
   "author": {
-    "name": "alvarorichard"
+    "name": "Jaimedsf"
   },
   "info": {
     "productName": "GoAnime",
     "productVersion": "1.8.6",
-    "copyright": "Copyright © 2026 alvarorichard",
+    "copyright": "Copyright © 2023 Krone, © 2026 Jaimedsf (GUI)",
     "comments": "GoAnime desktop (Wails v2)"
   }
 }

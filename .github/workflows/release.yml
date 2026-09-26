@@ -631,7 +631,6 @@ jobs:
           echo "| macOS | Universal (Intel x86_64 + Apple Silicon ARM64) | \`goanime-darwin-universal\` |" >> RELEASE_NOTES.md
           echo "| Windows | Installer | \`GoAnime-Installer-\${VERSION#v}.exe\` (Recommended) |" >> RELEASE_NOTES.md
           echo "| Windows | x86_64 | \`goanime-windows-amd64.exe\` |" >> RELEASE_NOTES.md
-          echo "| Arch Linux | x86_64 | \`yay -S goanime\` (AUR) |" >> RELEASE_NOTES.md
           echo "" >> RELEASE_NOTES.md
           echo "All binaries are built with SQLite tracking support enabled." >> RELEASE_NOTES.md
           
@@ -680,7 +679,9 @@ jobs:
     name: Publish to AUR
     runs-on: ubuntu-latest
     needs: release
-    if: ${{ !contains(github.ref, '-') }}  # Skip pre-releases
+    # The AUR "goanime" package belongs to the original project; a fork must
+    # never publish to it, secrets or not.
+    if: ${{ github.repository == 'alvarorichard/GoAnime' && !contains(github.ref, '-') }}  # Skip pre-releases
     steps:
       - name: Check AUR secrets
         id: check-secrets

@@ -1,0 +1,151 @@
+# Keeps this fork on top of the original project.
+#
+# Once a week (or on demand) it looks for commits in alvarorichard/GoAnime that
+# this repository does not have yet, and tries to merge them:
+#
+#   - clean merge  → pushes an upstream-sync/<sha> branch and opens a PR,
+#                    then dispatches CI on it;
+#   - conflicts    → opens (or updates) one issue listing the files and the
+#                    commands to resolve them locally.
+#
+# It never pushes to main and never touches the upstream repository: the
+# upstream remote is only fetched.
+#
+# Why CI is dispatched by hand: a PR opened with GITHUB_TOKEN does not trigger
+# the pull_request workflows (GitHub's guard against workflow loops), but a
+# workflow_dispatch is the documented exception, so the PR still gets checks.
+
+name: Upstream sync
+
+on:
+  schedule:
+    - cron: '0 12 * * 1' # Monday 09:00 America/Sao_Paulo
+  workflow_dispatch:
+    inputs:
+      upstream_branch:
+        description: 'Upstream branch to merge (dev carries source fixes before a release)'
+        required: true
+        default: dev
+        type: choice
+        options: [dev, main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: alvarorichard/GoAnime
+  UPSTREAM_BRANCH: ${{ inputs.upstream_branch || 'dev' }}
+
+jobs:
+  sync:
+    # Only the fork syncs; this file must stay inert if it ever reaches upstream.
+    if: github.repository != 'alvarorichard/GoAnime'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch --no-tags upstream "${UPSTREAM_BRANCH}"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+      - name: Look for new upstream commits
+        id: diff
+        run: |
+          upstream_sha=$(git rev-parse --short "upstream/${UPSTREAM_BRANCH}")
+          behind=$(git rev-list --count "HEAD..upstream/${UPSTREAM_BRANCH}")
+          echo "sha=${upstream_sha}" >> "$GITHUB_OUTPUT"
+          echo "behind=${behind}" >> "$GITHUB_OUTPUT"
+          echo "branch=upstream-sync/${upstream_sha}" >> "$GITHUB_OUTPUT"
+          echo "main is ${behind} commit(s) behind ${UPSTREAM_REPO}@${UPSTREAM_BRANCH} (${upstream_sha})"
+
+      - name: Skip when a PR for this upstream commit already exists
+        id: existing
+        if: steps.diff.outputs.behind != '0'
+        run: |
+          if git ls-remote --exit-code --heads origin "${{ steps.diff.outputs.branch }}" >/dev/null; then
+            echo "Branch ${{ steps.diff.outputs.branch }} already exists; nothing new to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Try the merge
+        id: merge
+        if: steps.diff.outputs.behind != '0' && steps.existing.outputs.skip == 'false'
+        run: |
+          git switch -c "${{ steps.diff.outputs.branch }}"
+          if git merge --no-ff --no-edit \
+              -m "Merge ${UPSTREAM_REPO}@${UPSTREAM_BRANCH} (${{ steps.diff.outputs.sha }})" \
+              "upstream/${UPSTREAM_BRANCH}"; then
+            echo "clean=true" >> "$GITHUB_OUTPUT"
+          else
+            {
+              echo 'conflicts<<EOF'
+              git diff --name-only --diff-filter=U
+              echo 'EOF'
+            } >> "$GITHUB_OUTPUT"
+            git merge --abort
+            echo "clean=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open a PR for a clean merge
+        if: steps.merge.outputs.clean == 'true'
+        run: |
+          branch="${{ steps.diff.outputs.branch }}"
+          git push origin "$branch"
+          log=$(git log --no-merges --format='- %h %s' "main..upstream/${UPSTREAM_BRANCH}" | head -50)
+          body=$(printf '%s\n\n%s\n\n%s\n' \
+            "Merge automático de **${{ steps.diff.outputs.behind }}** commit(s) de \`${UPSTREAM_REPO}@${UPSTREAM_BRANCH}\` sem conflitos." \
+            "$log" \
+            "Antes de aprovar: confira o CI e rode a GUI — um merge limpo no texto ainda pode quebrar o comportamento (ex.: uma fonte removida no upstream que a GUI referencia).")
+          gh pr create --base main --head "$branch" \
+            --title "Sync com upstream: ${UPSTREAM_BRANCH}@${{ steps.diff.outputs.sha }}" \
+            --body "$body"
+          gh workflow run ci.yml --ref "$branch"
+
+      - name: Report conflicts in an issue
+        if: steps.merge.outputs.clean == 'false'
+        env:
+          CONFLICTS: ${{ steps.merge.outputs.conflicts }}
+        run: |
+          title="Sync com upstream: conflitos para resolver"
+          files=$(printf '%s\n' "$CONFLICTS" | sed 's/^/- /')
+          body=$(cat <<EOF
+          O merge de \`${UPSTREAM_REPO}@${UPSTREAM_BRANCH}\` (${{ steps.diff.outputs.sha }}, ${{ steps.diff.outputs.behind }} commit(s) novos) tem conflitos em:
+
+          ${files}
+
+          Para resolver localmente:
+
+          \`\`\`bash
+          git fetch origin
+          git switch -c upstream-sync/${{ steps.diff.outputs.sha }} origin/main
+          git remote add upstream https://github.com/${UPSTREAM_REPO}.git 2>/dev/null || true
+          git fetch upstream ${UPSTREAM_BRANCH}
+          git merge upstream/${UPSTREAM_BRANCH}
+          \`\`\`
+          EOF
+          )
+          existing=$(gh issue list --state open --search "in:title \"$title\"" --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi

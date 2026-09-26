@@ -51,3 +51,6 @@ node_modules/
 
 # Wails generates JS bindings the hand-written frontend does not import.
 cmd/goanime-gui/frontend/src/
+
+# Local agent tooling
+.codex/

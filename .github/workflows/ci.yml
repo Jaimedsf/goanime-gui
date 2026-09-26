@@ -5,6 +5,9 @@ on:
     branches: [main, dev]
   pull_request:
     branches: [main, dev]
+  # Lets upstream-sync.yml run CI on the PR it opens: PRs created with
+  # GITHUB_TOKEN do not fire pull_request, but a dispatch does.
+  workflow_dispatch:
 
 permissions:
   contents: read
