@@ -35,7 +35,6 @@ var (
 // Storage provides unified SQLite-backed storage for GoAnime without requiring CGO.
 type Storage struct {
 	db *sql.DB
-	mu sync.RWMutex
 }
 
 // DefaultPath returns the standard location of the SQLite database.
