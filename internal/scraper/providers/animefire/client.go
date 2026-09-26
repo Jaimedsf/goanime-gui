@@ -1,4 +1,4 @@
-// Package scraper provides access to animefire.io
+// Package scraper provides access to animefire.one
 package animefire
 
 import (
@@ -20,10 +20,10 @@ import (
 const (
 	// AnimefireBase is the public site. It still serves the pages a user opens
 	// in a browser, so it remains the shape of the URLs we hand upstream.
-	AnimefireBase = "https://animefire.io"
+	AnimefireBase = "https://animefire.one"
 	// AnimefireAPIBase is the JSON API the rewritten site talks to. Every
 	// listing, episode and stream lookup goes through it.
-	AnimefireAPIBase = "https://api.animefire.io"
+	AnimefireAPIBase = "https://api.animefire.one"
 
 	// maxSearchResults caps how many search hits we map. The API answers with
 	// 30 for a broad query; more than that is noise in a picker.
@@ -67,12 +67,33 @@ func NewAnimefireClient() *AnimefireClient {
 
 // apiCard is one entry in a listing (search, home, recommendations).
 type apiCard struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Audio       string `json:"audio"`
-	PosterSrc   string `json:"poster_src"`
-	Status      string `json:"status"`
-	PublishedAt string `json:"published_at"`
+	ID          string            `json:"id"`
+	Title       string            `json:"title"`
+	Titles      map[string]string `json:"titles"`
+	Audio       string            `json:"audio"`
+	PosterSrc   string            `json:"poster_src"`
+	Status      string            `json:"status"`
+	PublishedAt string            `json:"published_at"`
+}
+
+// name returns the card's display title. The API used to send a flat "title";
+// since the move to animefire.one it sends "titles" keyed by region, so the
+// Brazilian one is preferred and the others are fallbacks.
+func (c apiCard) name() string {
+	if t := strings.TrimSpace(c.Title); t != "" {
+		return t
+	}
+	for _, k := range []string{"BR", "US", "JP"} {
+		if t := strings.TrimSpace(c.Titles[k]); t != "" {
+			return t
+		}
+	}
+	for _, t := range c.Titles {
+		if t = strings.TrimSpace(t); t != "" {
+			return t
+		}
+	}
+	return ""
 }
 
 type apiSearchResponse struct {
@@ -307,11 +328,12 @@ func (c *AnimefireClient) SearchAnime(query string) ([]*models.Anime, error) {
 
 	animes := make([]*models.Anime, 0, len(parsed.Data))
 	for _, card := range parsed.Data {
-		if card.ID == "" || card.Title == "" {
+		title := card.name()
+		if card.ID == "" || title == "" {
 			continue
 		}
 		animes = append(animes, &models.Anime{
-			Name:      decorateTitle(card.Title, card.Audio),
+			Name:      decorateTitle(title, card.Audio),
 			URL:       c.animeURL(card.ID),
 			ImageURL:  card.PosterSrc,
 			Year:      yearOf(card.PublishedAt),

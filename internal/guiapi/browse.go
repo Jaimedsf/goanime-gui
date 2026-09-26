@@ -745,6 +745,9 @@ func anilistWait() {
 // 700ms pacing slot — on every lookup. See breaker.go.
 var anilistBreaker = &apiBreaker{name: "anilist"}
 
+// anilistEndpoint is a variable so tests can point it at a local server.
+var anilistEndpoint = "https://graphql.anilist.co"
+
 // anilistPost is the breaker-guarded entry point, for the metadata fan-out.
 func anilistPost(query string, variables map[string]any, out any) error {
 	if !anilistBreaker.allow() {
@@ -797,7 +800,7 @@ func anilistSend(query string, variables map[string]any, out any) error {
 // anilistTry performs one attempt. A non-zero first result means the call
 // was rate-limited and is worth retrying after that delay.
 func anilistTry(body []byte, out any) (time.Duration, error) {
-	req, err := http.NewRequest(http.MethodPost, "https://graphql.anilist.co", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, anilistEndpoint, bytes.NewReader(body))
 	if err != nil {
 		return 0, fmt.Errorf("consulta inválida: %w", err)
 	}

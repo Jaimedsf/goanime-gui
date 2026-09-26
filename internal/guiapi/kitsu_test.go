@@ -309,6 +309,9 @@ func TestFetchCatalogNamesEveryBackendItTried(t *testing.T) {
 	kitsuServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	})
+	anilistServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	})
 
 	_, err := fetchCatalog(BrowseQuery{Mode: ModeTop, Page: 1}.normalise())
 	require.Error(t, err)

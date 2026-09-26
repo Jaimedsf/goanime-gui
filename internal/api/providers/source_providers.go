@@ -165,7 +165,7 @@ func (p *animeFireProvider) Describe() source.Descriptor {
 		Explicit:    []string{"Animefire.io", "AnimeFire"},
 		Tags:        []string{"[animefire]"},
 		URLMatchers: []string{"animefire"},
-		ProbeURL:    "https://animefire.io",
+		ProbeURL:    "https://animefire.one",
 	}
 }
 

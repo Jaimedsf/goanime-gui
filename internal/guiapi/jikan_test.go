@@ -30,6 +30,23 @@ func jikanServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
 	return srv
 }
 
+// anilistServer points the AniList layer at a local handler for the duration
+// of one test, so a test that stages an outage of every backend never reaches
+// the real API — which answers again, and would make the chain succeed.
+func anilistServer(t *testing.T, handler http.HandlerFunc) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(handler)
+	previous := anilistEndpoint
+	anilistEndpoint = srv.URL
+	anilistBreaker.reset()
+	t.Cleanup(func() {
+		anilistEndpoint = previous
+		anilistBreaker.reset()
+		srv.Close()
+	})
+	return srv
+}
+
 // A trimmed response in the exact shape Jikan answers with.
 const jikanAnimePayload = `{
 	"pagination": {"has_next_page": true, "current_page": 1},
@@ -237,13 +254,16 @@ func TestJikanFetchGenresReturnsNames(t *testing.T) {
 }
 
 // With every backend down the error has to name each one rather than
-// silently reporting an empty catalog. Kitsu is stubbed as down too, or the
-// chain would reach the real API and legitimately succeed.
+// silently reporting an empty catalog. Kitsu and AniList are stubbed as down
+// too, or the chain would reach the real APIs and legitimately succeed.
 func TestFetchCatalogFallsBackToAniListWhenJikanIsDown(t *testing.T) {
 	jikanServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusGatewayTimeout)
 	})
 	kitsuServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	})
+	anilistServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	})
 

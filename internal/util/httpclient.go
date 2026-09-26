@@ -299,8 +299,8 @@ var knownHosts = []string{
 	"graphql.anilist.co:443",
 	"api.jikan.moe:443",
 	"allanime.day:443",
-	"animefire.io:443",
-	"kitsu.io:443",
+	"api.animefire.one:443",
+	"kitsu.app:443",
 }
 
 var preWarmOnce = &sync.Once{}
