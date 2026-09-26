@@ -2,15 +2,16 @@
 
 ## Versões suportadas
 
-Este repositório não publica releases nem binários prontos: o app é compilado
-a partir do código. Só a branch `main` recebe correções de segurança. Se você
-compilou a partir de um commit antigo, atualize e compile de novo antes de
-reportar.
+Correções de segurança saem na próxima release e entram na `main`. Antes de
+reportar, confira se o problema acontece na
+[release mais recente](https://github.com/Jaimedsf/goanime-gui/releases/latest) ou no último
+commit da `main`.
 
-| Versão                 | Suportada |
-| ---------------------- | --------- |
-| `main` (último commit) | Sim       |
-| Commits anteriores     | Não       |
+| Versão                        | Suportada |
+| ----------------------------- | --------- |
+| Release mais recente          | Sim       |
+| `main` (último commit)        | Sim       |
+| Releases e commits anteriores | Não       |
 
 ## Como reportar uma vulnerabilidade
 

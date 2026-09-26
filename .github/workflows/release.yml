@@ -281,6 +281,16 @@ jobs:
           echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
           echo "VERSION_NUMBER=${VERSION_NUMBER}" >> $GITHUB_OUTPUT
 
+          # Windows version resources only take up to four numbers, so the
+          # fork's build suffix becomes the fourth: 1.8.7-gui.2 -> 1.8.7.2.
+          # Any other suffix (-beta.1 and the like) is dropped.
+          if [[ "$VERSION_NUMBER" =~ ^([0-9.]+)-gui\.([0-9]+) ]]; then
+            FILE_VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}"
+          else
+            FILE_VERSION="${VERSION_NUMBER%%-*}"
+          fi
+          echo "FILE_VERSION=${FILE_VERSION}" >> $GITHUB_OUTPUT
+
       - name: Download Windows amd64 binary
         uses: actions/download-artifact@v8
         with:
@@ -337,6 +347,16 @@ jobs:
             exit 1
           }
           Write-Host "Desktop app built, subsystem $subsystem (GUI)"
+          Copy-Item build/staging/goanime-gui.exe build/staging/goanime-gui-windows-amd64.exe
+
+      - name: Upload the portable desktop app
+        uses: actions/upload-artifact@v7
+        with:
+          # Picked up by the release job's goanime-* download and zipped
+          # there, next to the terminal binaries.
+          name: ${{ env.BINARY_NAME }}-gui-windows-amd64
+          path: build/staging/goanime-gui-windows-amd64.exe
+          retention-days: 1
 
       - name: Stage the WebView2 bootstrapper
         shell: pwsh
@@ -424,6 +444,7 @@ jobs:
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.VERSION_NUMBER }}"
+          $fileVersion = "${{ steps.version.outputs.FILE_VERSION }}"
           $issPath = "build/install.iss"
           
           # Read the file
@@ -431,11 +452,12 @@ jobs:
           
           # Update the version
           $content = $content -replace '#define MyAppVersion ".*"', "#define MyAppVersion `"$version`""
+          $content = $content -replace '#define MyAppFileVersion ".*"', "#define MyAppFileVersion `"$fileVersion`""
           
           # Write back
           Set-Content $issPath $content
           
-          Write-Host "Updated install.iss with version $version"
+          Write-Host "Updated install.iss with version $version (file version $fileVersion)"
 
       - name: Build installer with Inno Setup
         shell: pwsh
@@ -482,11 +504,12 @@ jobs:
           echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
           echo "VERSION_NUMBER=${VERSION#v}" >> $GITHUB_OUTPUT
           
-          # Check if pre-release
-          if [[ "$VERSION" == *"-"* ]]; then
-            echo "PRERELEASE=true" >> $GITHUB_OUTPUT
-          else
+          # vX.Y.Z-gui.N is the fork's normal release tag, not a pre-release;
+          # anything else after a hyphen (-beta.1, -gui.1-rc.1) still is.
+          if [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?(-gui\.[0-9]+)?$ ]]; then
             echo "PRERELEASE=false" >> $GITHUB_OUTPUT
+          else
+            echo "PRERELEASE=true" >> $GITHUB_OUTPUT
           fi
 
       - name: Download all artifacts
@@ -549,91 +572,64 @@ jobs:
           echo "Checksums generated:"
           cat checksums-sha256.txt
 
-      - name: Generate changelog
+      - name: Generate release notes
         id: changelog
         run: |
           VERSION=${{ steps.version.outputs.VERSION }}
-          
-          # Check if manual CHANGELOG.md exists in repo root
-          if [ -f "CHANGELOG.md" ]; then
-            echo "Using manual CHANGELOG.md from repository"
-            cp CHANGELOG.md RELEASE_NOTES.md
+          NOTES=".github/release-notes/${VERSION}.md"
+
+          # CHANGELOG.md is upstream's and describes upstream's releases, so it
+          # is not used here. Each fork release gets a hand-written notes file;
+          # without one, fall back to the commits since the previous tag.
+          if [ -f "$NOTES" ]; then
+            echo "Using $NOTES"
+            cp "$NOTES" RELEASE_NOTES.md
           else
-            echo "Generating changelog from commits"
-            
-            # Get the previous tag
+            echo "No $NOTES, listing commits instead"
             PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-            
-            echo "## What's Changed in ${VERSION}" > RELEASE_NOTES.md
-            echo "" >> RELEASE_NOTES.md
-            
-            if [ -n "$PREV_TAG" ]; then
-              echo "### Commits since ${PREV_TAG}" >> RELEASE_NOTES.md
-              echo "" >> RELEASE_NOTES.md
-              
-              # Group commits by type (conventional commits)
-              echo "#### Features" >> RELEASE_NOTES.md
-              git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --grep="^feat" >> RELEASE_NOTES.md || true
-              echo "" >> RELEASE_NOTES.md
-              
-              echo "#### Bug Fixes" >> RELEASE_NOTES.md
-              git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --grep="^fix" >> RELEASE_NOTES.md || true
-              echo "" >> RELEASE_NOTES.md
-              
-              echo "#### Documentation" >> RELEASE_NOTES.md
-              git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --grep="^docs" >> RELEASE_NOTES.md || true
-              echo "" >> RELEASE_NOTES.md
-              
-              echo "#### Other Changes" >> RELEASE_NOTES.md
-              git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --invert-grep --grep="^feat\|^fix\|^docs" >> RELEASE_NOTES.md || true
-              echo "" >> RELEASE_NOTES.md
-            else
-              echo "Initial release" >> RELEASE_NOTES.md
-              echo "" >> RELEASE_NOTES.md
-            fi
+            {
+              echo "## O que mudou em ${VERSION}"
+              echo
+              if [ -n "$PREV_TAG" ]; then
+                git log "${PREV_TAG}..HEAD" --no-merges --pretty=format:"- %s (%h)"
+                echo
+              else
+                echo "Primeira release do fork."
+              fi
+            } > RELEASE_NOTES.md
           fi
-          
-          # Append installation instructions
-          echo "" >> RELEASE_NOTES.md
-          echo "---" >> RELEASE_NOTES.md
-          echo "" >> RELEASE_NOTES.md
-          echo "### Installation" >> RELEASE_NOTES.md
-          echo "" >> RELEASE_NOTES.md
-          echo "#### Linux / macOS" >> RELEASE_NOTES.md
-          echo '```bash' >> RELEASE_NOTES.md
-          echo "# Download the binary for your platform" >> RELEASE_NOTES.md
-          echo "curl -LO https://github.com/Jaimedsf/goanime-gui/releases/download/${VERSION}/goanime-linux-amd64.tar.gz" >> RELEASE_NOTES.md
-          echo "" >> RELEASE_NOTES.md
-          echo "# Extract and install" >> RELEASE_NOTES.md
-          echo "tar -xzf goanime-linux-amd64.tar.gz" >> RELEASE_NOTES.md
-          echo "chmod +x goanime-linux-amd64" >> RELEASE_NOTES.md
-          echo "sudo mv goanime-linux-amd64 /usr/local/bin/goanime" >> RELEASE_NOTES.md
-          echo '```' >> RELEASE_NOTES.md
-          echo "" >> RELEASE_NOTES.md
-          echo "#### Windows" >> RELEASE_NOTES.md
-          echo "**Recommended:** Download and run the \`GoAnime-Installer-${VERSION#v}.exe\` for automatic setup with MPV included." >> RELEASE_NOTES.md
-          echo "" >> RELEASE_NOTES.md
-          echo "Or download the portable \`.zip\` file for your architecture and extract it." >> RELEASE_NOTES.md
-          echo "" >> RELEASE_NOTES.md
-          echo "### Verification" >> RELEASE_NOTES.md
-          echo "" >> RELEASE_NOTES.md
-          echo "Verify your download using the checksums:" >> RELEASE_NOTES.md
-          echo '```bash' >> RELEASE_NOTES.md
-          echo "sha256sum -c checksums-sha256.txt" >> RELEASE_NOTES.md
-          echo '```' >> RELEASE_NOTES.md
-          echo "" >> RELEASE_NOTES.md
-          echo "### Supported Platforms" >> RELEASE_NOTES.md
-          echo "" >> RELEASE_NOTES.md
-          echo "| OS | Architecture | Binary |" >> RELEASE_NOTES.md
-          echo "|---|---|---|" >> RELEASE_NOTES.md
-          echo "| Linux | x86_64 | \`goanime-linux-amd64\` |" >> RELEASE_NOTES.md
-          echo "| Linux | ARM64 | \`goanime-linux-arm64\` |" >> RELEASE_NOTES.md
-          echo "| macOS | Universal (Intel x86_64 + Apple Silicon ARM64) | \`goanime-darwin-universal\` |" >> RELEASE_NOTES.md
-          echo "| Windows | Installer | \`GoAnime-Installer-\${VERSION#v}.exe\` (Recommended) |" >> RELEASE_NOTES.md
-          echo "| Windows | x86_64 | \`goanime-windows-amd64.exe\` |" >> RELEASE_NOTES.md
-          echo "" >> RELEASE_NOTES.md
-          echo "All binaries are built with SQLite tracking support enabled." >> RELEASE_NOTES.md
-          
+
+          {
+            echo
+            echo "---"
+            echo
+            echo "### Downloads"
+            echo
+            echo "| Sistema | Arquivo | O que é |"
+            echo "|---|---|---|"
+            echo "| Windows | \`GoAnime-Installer-${VERSION#v}.exe\` | **Recomendado.** App desktop e app de terminal, com o mpv incluído e o WebView2 instalado se faltar |"
+            echo "| Windows | \`goanime-gui-windows-amd64.zip\` | App desktop portátil (precisa do mpv no \`PATH\`) |"
+            echo "| Windows | \`goanime-windows-amd64.zip\` | App de terminal |"
+            echo "| Linux x86_64 | \`goanime-linux-amd64.tar.gz\` | App de terminal |"
+            echo "| Linux ARM64 | \`goanime-linux-arm64.tar.gz\` | App de terminal |"
+            echo "| macOS (Intel e Apple Silicon) | \`goanime-darwin-universal.tar.gz\` | App de terminal |"
+            echo
+            echo "Por enquanto o app desktop só é empacotado para Windows. No Linux e no macOS, compile a partir do código (veja o README)."
+            echo
+            echo "#### Linux / macOS"
+            echo '```bash'
+            echo "curl -LO https://github.com/${{ github.repository }}/releases/download/${VERSION}/goanime-linux-amd64.tar.gz"
+            echo "tar -xzf goanime-linux-amd64.tar.gz"
+            echo "sudo install goanime-linux-amd64 /usr/local/bin/goanime"
+            echo '```'
+            echo
+            echo "### Verificação"
+            echo
+            echo '```bash'
+            echo "sha256sum -c checksums-sha256.txt --ignore-missing"
+            echo '```'
+          } >> RELEASE_NOTES.md
+
           cat RELEASE_NOTES.md
 
       - name: Create GitHub Release
@@ -651,6 +647,7 @@ jobs:
             release/goanime-linux-arm64.tar.gz
             release/goanime-darwin-universal.tar.gz
             release/goanime-windows-amd64.zip
+            release/goanime-gui-windows-amd64.zip
             release/GoAnime-Installer-*.exe
             release/checksums-sha256.txt
             release/checksums-sha512.txt

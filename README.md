@@ -55,8 +55,10 @@ No Windows, o `mpv` precisa estar no `PATH` do sistema.
 
 ## Compilando
 
-Este repositório não publica binários prontos, então a instalação é a partir
-do código:
+Os pacotes prontos ficam nas [releases](https://github.com/Jaimedsf/goanime-gui/releases/latest):
+o instalador do Windows (app desktop, app de terminal e mpv incluído), o app
+desktop portátil para Windows e o app de terminal para Linux, macOS e Windows.
+Para compilar a partir do código:
 
 ```bash
 git clone https://github.com/Jaimedsf/goanime-gui.git
