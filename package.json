@@ -17,9 +17,9 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@typescript/native-preview": "^7.0.0-dev.20260707.2",
-    "eslint": "^10.11.0",
-    "globals": "^17.12.0",
-    "prettier": "^3.9.9"
+    "eslint": "^10.13.0",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10"
   },
   "engines": {
     "node": ">=20"
