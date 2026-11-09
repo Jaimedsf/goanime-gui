@@ -203,7 +203,7 @@ func playWithReferer(streamURL, playerPath, sourceName, referer string) error {
 			filepath.Base(realPath))
 	case <-time.After(playerStartGrace):
 		// Still running: detach the Wait goroutine and report success.
-		go func() { <-done }()
+		// done is buffered, so the Wait goroutine never blocks on send.
 		return nil
 	}
 }

@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: '1.27.1'
+  GO_VERSION: '1.27.3'
   GOFLAGS: -mod=readonly
   GOTOOLCHAIN: local
 
@@ -96,7 +96,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.13.1
+          version: v2.15.0
           args: --timeout=20m
 
   security:
@@ -121,10 +121,13 @@ jobs:
         uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: moderate
+          # echo/v4 is only pulled in by the Wails dev server; these advisories
+          # have no patched release yet.
+          allow-ghsas: GHSA-99jh-6h7p-pp36, GHSA-246p-cpwv-v3jq
 
       - name: Install security scanners
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@v2.28.0
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.30.0
           go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
 
       - name: Scan source for insecure patterns
@@ -291,7 +294,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.3'
 
       - name: Get dependencies
         run: go mod download
@@ -356,7 +359,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.3'
 
       - name: Check out code
         uses: actions/checkout@v7
