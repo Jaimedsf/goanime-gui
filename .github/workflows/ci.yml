@@ -121,6 +121,9 @@ jobs:
         uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: moderate
+          # echo/v4 is only pulled in by the Wails dev server; these advisories
+          # have no patched release yet.
+          allow-ghsas: GHSA-99jh-6h7p-pp36, GHSA-246p-cpwv-v3jq
 
       - name: Install security scanners
         run: |
