@@ -96,7 +96,7 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.13.1
+          version: v2.15.0
           args: --timeout=20m
 
   security:
@@ -127,7 +127,7 @@ jobs:
 
       - name: Install security scanners
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@v2.28.0
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.30.0
           go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
 
       - name: Scan source for insecure patterns
