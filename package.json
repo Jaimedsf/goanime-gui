@@ -19,7 +19,7 @@
     "@typescript/native-preview": "^7.0.0-dev.20260707.2",
     "eslint": "^10.14.0",
     "globals": "^17.14.0",
-    "prettier": "^3.9.10"
+    "prettier": "^3.10.1"
   },
   "engines": {
     "node": ">=20"
